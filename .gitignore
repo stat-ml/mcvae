@@ -2,6 +2,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# PytorchLightning
+lightning_logs/**/*
+checkpoints/**/*
+
+# Data
+data/**/*
+
 # C extensions
 *.so
 
