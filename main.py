@@ -1,23 +1,30 @@
 from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
-from models import VAE, IWAE
+from models import VAE, IWAE, MetHMC_VAE
 from utils import make_dataloaders, get_activations
 
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser = pl.Trainer.add_argparse_args(parser)
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
-    parser.add_argument("--model", default="IWAE", choices=["VAE", "IWAE"])
+    parser.add_argument("--model", default="VAE", choices=["VAE", "IWAE", "MetHMC_VAE"])
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--val_batch_size", default=50, type=int)
-    parser.add_argument("--hidden_dim", default=2, type=int)
-    parser.add_argument("--dataset", default='fashionmnist', choices=['mnist', 'fashionmnist', 'cifar'])
+    parser.add_argument("--hidden_dim", default=64, type=int)
+    parser.add_argument("--dataset", default='cifar', choices=['mnist', 'fashionmnist', 'cifar', 'celeba'])
     parser.add_argument("--num_samples", default=1, type=int)
     parser.add_argument("--act_func", default="tanh", choices=["relu", "leakyrelu", "tanh", "logsigmoid", "logsoftmax"])
+    parser.add_argument("--net_type", choices=["fc", "conv"], type=str, default="fc")
+
+    parser.add_argument("--K", type=int, default=3)
+    parser.add_argument("--n_leapfrogs", type=int, default=3)
+    parser.add_argument("--step_size", type=float, default=0.01)
+
     act_func = get_activations()
 
     args = parser.parse_args()
+    print(args)
     args.gpus = 1
 
     kwargs = {'num_workers': 20, 'pin_memory': True} if args.gpus else {}
@@ -26,15 +33,21 @@ if __name__ == '__main__':
                                                 val_batch_size=args.val_batch_size,
                                                 **kwargs)
     if args.model == "VAE":
-        model = VAE(act_func=act_func[args.act_func], num_samples=args.num_samples, hidden_dim=args.hidden_dim)
+        model = VAE(act_func=act_func[args.act_func], num_samples=args.num_samples, hidden_dim=args.hidden_dim,
+                    net_type=args.net_type, dataset=args.dataset)
     elif args.model == "IWAE":
         model = IWAE(act_func=act_func[args.act_func], num_samples=args.num_samples, hidden_dim=args.hidden_dim,
-                     name=args.model)
+                     name=args.model, net_type=args.net_type, dataset=args.dataset)
+    elif args.model == 'MetHMC_VAE':
+        model = MetHMC_VAE(n_leapfrogs=args.n_leapfrogs, step_size=args.step_size, K=args.K,
+                           act_func=act_func[args.act_func],
+                           num_samples=args.num_samples, hidden_dim=args.hidden_dim,
+                           name=args.model, net_type=args.net_type, dataset=args.dataset)
     else:
         raise ValueError
 
     trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, deterministic=True, max_epochs=150,
-                                            fast_dev_run=True)
+                                            fast_dev_run=False)
     pl.Trainer()
     trainer.fit(model, train_dataloader=train_loader, val_dataloaders=val_loader)
     trainer.save_checkpoint(f"./checkpoints/{args.model}_{args.hidden_dim}.ckpt")

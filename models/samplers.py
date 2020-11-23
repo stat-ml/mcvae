@@ -3,18 +3,32 @@ import torch.nn as nn
 
 
 class HMC(nn.Module):
-    def __init__(self, n_leapfrogs, step_size, use_barker=False):
+    def __init__(self, n_leapfrogs, step_size, use_barker=False, partial_ref=False, learnable=False):
         '''
         :param n_leapfrogs: number of leapfrog iterations
         :param step_size: stepsize for leapfrog
         :param use_barker: If True -- Barker ratios applied. MH otherwise
+        :param partial_ref: whether use partial refresh or not
+        :param learnable: whether learnable (usage for Met model) or not
         '''
         super().__init__()
         self.n_leapfrogs = n_leapfrogs
         self.use_barker = use_barker
-        self.register_buffer('step_size', torch.tensor(step_size, dtype=torch.float32))
+        self.partial_ref = partial_ref
+        self.learnable = learnable
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
         self.register_buffer('one', torch.tensor(1., dtype=torch.float32))
+        self.alpha_logit = nn.Parameter(self.zero, requires_grad=learnable)
+        self.log_stepsize = nn.Parameter(torch.log(torch.tensor(step_size, dtype=torch.float32)),
+                                         requires_grad=learnable)
+
+    @property
+    def step_size(self):
+        return torch.exp(self.log_stepsize)
+
+    @property
+    def alpha(self):
+        return torch.sigmoid(self.alpha_logit)
 
     def _forward_step(self, z_old, x=None, target=None, p_old=None):
         p_ = p_old + self.step_size / 2. * self.get_grad(z=z_old, target=target,
@@ -32,6 +46,11 @@ class HMC(nn.Module):
     def _make_transition(self, z_old, target, p_old=None, x=None):
         uniform = torch.distributions.Uniform(low=self.zero, high=self.one)
         std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
+
+        if self.partial_ref:
+            log_jac = p_old.shape[1] * torch.log(self.alpha) * torch.ones_like(z[:, 0])
+        else:
+            log_jac = torch.zeros_like(z_old[:, 0])
         ############ Then we compute new points and densities ############
         z_upd, p_upd = self.forward_step(z_old=z_old, p_old=p_old, target=target, x=x)
 
@@ -49,22 +68,31 @@ class HMC(nn.Module):
         log_probs = torch.log(uniform.sample((z_upd.shape[0],)))
         a = torch.where(log_probs < current_log_alphas_pre, torch.ones_like(log_probs), torch.zeros_like(log_probs))
 
+        if self.use_barker:
+            current_log_alphas = torch.where((a == 0.), -log_1_t, current_log_alphas_pre)
+        else:
+            expression = torch.log(self.one - torch.exp(log_t) + 1e-8)
+            current_log_alphas = torch.where((a == 0), expression, current_log_alphas_pre)
+
         z_new = torch.where((a == 0.)[:, None], z_old, z_upd)
-        p_new = torch.where((a == 0.)[:, None], p_old, p_upd)
+        p_new = torch.where((a == 0.)[:, None], -p_old, -p_upd)  ##
 
-        return z_new, p_new, a
+        return z_new, p_new, a, current_log_alphas
 
-    def make_transition(self, z_old, target, x=None):
-        std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
-        p = std_normal.sample(z_old.shape)
-        z_new, p_new, a = self._make_transition(z_old=z_old,
-                                                target=target, p_old=p, x=x)
-        return z_new, p_new, a
+    def make_transition(self, z, target, x=None, p=None):
+        if p is None:
+            p = torch.randn_like(z.shape)
+        if self.partial_ref:
+            p = p * self.alpha + torch.sqrt(self.one - self.alpha ** 2) * torch.randn_like(p)
+        z_new, p_new, a, current_log_alphas = self._make_transition(z_old=z,
+                                                                    target=target, p_old=p, x=x)
+        return z_new, p_new, a, current_log_alphas
 
     def forward_step(self, z_old, x=None, target=None, p_old=None):
         z_, p_ = self._forward_step(z_old=z_old, x=x, target=target, p_old=p_old)
-        z_.requires_grad_(False)
-        p_.requires_grad_(False)
+        if not self.learnable:
+            z_.requires_grad_(False)
+            p_.requires_grad_(False)
         return z_, p_
 
     def get_grad(self, z, target, x=None):
@@ -82,12 +110,12 @@ class HMC(nn.Module):
         samples = z_init
         if not return_trace:
             for _ in range(n_steps):
-                samples = self.make_transition(z_old=samples, target=target, x=x)[0]
+                samples = self.make_transition(z=samples, target=target, x=x)[0]
             return samples
         else:
             final = torch.tensor([], device=self.one.device, dtype=torch.float32)
             for i in range(burnin + n_steps):
-                samples = self.make_transition(z_old=samples, target=target, x=x)[0]
+                samples = self.make_transition(z=samples, target=target, x=x)[0]
                 if i >= burnin:
                     final = torch.cat([final, samples])
             return final

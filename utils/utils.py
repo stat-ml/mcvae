@@ -28,6 +28,14 @@ def make_dataloaders(dataset, batch_size, val_batch_size, **kwargs):
         val_loader = torch.utils.data.DataLoader(
             datasets.CIFAR10('./data', train=False, transform=transforms.ToTensor()),
             batch_size=val_batch_size, shuffle=False, **kwargs)
+    elif dataset == 'celeba':
+        train_loader = torch.utils.data.DataLoader(
+            datasets.CelebA('./data', split="all", download=True,
+                            transform=transforms.ToTensor()),
+            batch_size=batch_size, shuffle=True, **kwargs)
+        val_loader = torch.utils.data.DataLoader(
+            datasets.CelebA('./data', split="valid", transform=transforms.ToTensor()),
+            batch_size=val_batch_size, shuffle=False, **kwargs)
     else:
         raise ValueError
 
