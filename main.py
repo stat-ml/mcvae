@@ -1,14 +1,14 @@
 from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
-from models import VAE, IWAE, MetHMC_VAE
+from models import VAE, IWAE, MetHMC_VAE, AIS_VAE
 from utils import make_dataloaders, get_activations
 
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser = pl.Trainer.add_argparse_args(parser)
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
-    parser.add_argument("--model", default="VAE", choices=["VAE", "IWAE", "MetHMC_VAE"])
+    parser.add_argument("--model", default="VAE", choices=["VAE", "IWAE", "MetHMC_VAE", "AIS_VAE"])
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--val_batch_size", default=50, type=int)
     parser.add_argument("--hidden_dim", default=64, type=int)
@@ -20,6 +20,8 @@ if __name__ == '__main__':
     parser.add_argument("--K", type=int, default=3)
     parser.add_argument("--n_leapfrogs", type=int, default=3)
     parser.add_argument("--step_size", type=float, default=0.01)
+    parser.add_argument("--use_barker", type=bool, default=True)
+    parser.add_argument("--binarize", type=bool, default=False)
 
     act_func = get_activations()
 
@@ -31,6 +33,7 @@ if __name__ == '__main__':
     train_loader, val_loader = make_dataloaders(dataset=args.dataset,
                                                 batch_size=args.batch_size,
                                                 val_batch_size=args.val_batch_size,
+                                                binarize=args.binarize,
                                                 **kwargs)
     if args.model == "VAE":
         model = VAE(act_func=act_func[args.act_func], num_samples=args.num_samples, hidden_dim=args.hidden_dim,
@@ -42,7 +45,11 @@ if __name__ == '__main__':
         model = MetHMC_VAE(n_leapfrogs=args.n_leapfrogs, step_size=args.step_size, K=args.K,
                            act_func=act_func[args.act_func],
                            num_samples=args.num_samples, hidden_dim=args.hidden_dim,
-                           name=args.model, net_type=args.net_type, dataset=args.dataset)
+                           name=args.model, net_type=args.net_type, dataset=args.dataset, use_barker=args.use_barker)
+    elif args.model == 'AIS_VAE':
+        model = AIS_VAE(step_size=args.step_size, K=args.K, use_barker=args.use_barker, num_samples=args.num_samples,
+                        dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
+                        hidden_dim=args.hidden_dim)
     else:
         raise ValueError
 

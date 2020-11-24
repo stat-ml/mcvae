@@ -2,6 +2,32 @@ import torch
 import torch.nn as nn
 
 
+def acceptance_ratio(log_t, log_1_t, use_barker):
+    if use_barker:
+        current_log_alphas_pre = log_t - log_1_t
+    else:
+        current_log_alphas_pre = torch.min(torch.zeros_like(log_t), log_t)
+
+    log_probs = torch.log(torch.rand_like(log_t))
+    a = torch.where(log_probs < current_log_alphas_pre, torch.ones_like(log_t), torch.zeros_like(log_t))
+
+    if use_barker:
+        current_log_alphas = torch.where((a == 0.), -log_1_t, current_log_alphas_pre)
+    else:
+        expression = torch.ones_like(log_t) - torch.exp(log_t)
+        expression = torch.where(expression <= torch.ones_like(log_t) * 1e-8, torch.ones_like(log_t) * 1e-8, expression)
+        corr_expression = torch.log(expression)
+        current_log_alphas = torch.where((a == 0), corr_expression, current_log_alphas_pre)
+
+    return a, current_log_alphas
+
+
+def _get_grad(z, target, x=None):
+    s = target(x=x, z=z)
+    grad = torch.autograd.grad(s.sum(), z)[0]
+    return grad
+
+
 class HMC(nn.Module):
     def __init__(self, n_leapfrogs, step_size, use_barker=False, partial_ref=False, learnable=False):
         '''
@@ -56,19 +82,8 @@ class HMC(nn.Module):
         log_t = target_log_density_f - target_log_density_old
         log_1_t = torch.logsumexp(torch.cat([torch.zeros_like(log_t).view(-1, 1),
                                              log_t.view(-1, 1)], dim=-1), dim=-1)  # log(1+t)
-        if self.use_barker:
-            current_log_alphas_pre = log_t - log_1_t
-        else:
-            current_log_alphas_pre = torch.min(torch.zeros_like(log_t), log_t)
 
-        log_probs = torch.log(uniform.sample((z_upd.shape[0],)))
-        a = torch.where(log_probs < current_log_alphas_pre, torch.ones_like(log_probs), torch.zeros_like(log_probs))
-
-        if self.use_barker:
-            current_log_alphas = torch.where((a == 0.), -log_1_t, current_log_alphas_pre)
-        else:
-            expression = torch.log(self.one - torch.exp(log_t) + 1e-8)
-            current_log_alphas = torch.where((a == 0), expression, current_log_alphas_pre)
+        a, current_log_alphas = acceptance_ratio(log_t=log_t, log_1_t=log_1_t, use_barker=self.use_barker)
 
         z_new = torch.where((a == 0.)[:, None], z_old, z_upd)
         p_new = torch.where((a == 0.)[:, None], -p_old, -p_upd)  ##
@@ -94,13 +109,8 @@ class HMC(nn.Module):
     def get_grad(self, z, target, x=None):
         z = z.detach().requires_grad_(True)
         with torch.enable_grad():
-            grad = self._get_grad(z=z, target=target, x=x)
+            grad = _get_grad(z=z, target=target, x=x)
             return grad
-
-    def _get_grad(self, z, target, x=None):
-        s = target(x=x, z=z)
-        grad = torch.autograd.grad(s.sum(), z)[0]
-        return grad
 
     def run_chain(self, z_init, target, x=None, n_steps=100, return_trace=False, burnin=0):
         samples = z_init
@@ -115,3 +125,71 @@ class HMC(nn.Module):
                 if i >= burnin:
                     final = torch.cat([final, samples])
             return final
+
+
+class MALA(nn.Module):
+    def __init__(self, step_size, use_barker, learnable):
+        '''
+        :param step_size: stepsize for leapfrog
+        :param use_barker: If True -- Barker ratios applied. MH otherwise
+        :param learnable: whether learnable (usage for Met model) or not
+        '''
+        super().__init__()
+        self.use_barker = use_barker
+        self.learnable = learnable
+        self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
+        self.register_buffer('one', torch.tensor(1., dtype=torch.float32))
+        self.log_stepsize = nn.Parameter(torch.log(torch.tensor(step_size, dtype=torch.float32)),
+                                         requires_grad=learnable)
+
+    @property
+    def step_size(self):
+        return torch.exp(self.log_stepsize)
+
+    def _forward_step(self, z_old, x=None, target=None):
+        eps = torch.randn_like(z_old)
+        update = torch.sqrt(2 * self.step_size) * eps + self.step_size * self.get_grad(z=z_old,
+                                                                                       target=target,
+                                                                                       x=x)
+        return z_old + update, eps
+
+    def make_transition(self, z, target, x=None):
+        """
+        Input:
+        z_old - current position
+        target - target distribution
+        x - data object (optional)
+        Output:
+        z_new - new position
+        current_log_alphas - current log_alphas, corresponding to sampled decision variables
+        a - decision variables (0 or +1)
+        """
+        ############ Then we compute new points and densities ############
+        std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
+
+        z_upd, eps = self._forward_step(z_old=z, x=x, target=target)
+
+        target_log_density_upd = target(z=z_upd, x=x)
+        target_log_density_old = target(z=z, x=x)
+
+        eps_reverse = (z - z_upd - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) * torch.sqrt(
+            2 * self.step_size)
+        proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
+        proposal_density_denominator = std_normal.log_prob(eps).sum(1)
+
+        log_t = target_log_density_upd + proposal_density_numerator - target_log_density_old - proposal_density_denominator
+        log_1_t = torch.logsumexp(torch.cat([torch.zeros_like(log_t).view(-1, 1),
+                                             log_t.view(-1, 1)], dim=-1), dim=-1)  # log(1+t)
+        ###Ratio wrong: we need to add reverse proposal density (as in AISTAT paper)
+
+        a, current_log_alphas = acceptance_ratio(log_t, log_1_t, use_barker=self.use_barker)
+
+        z_new = torch.where((a == torch.zeros_like(log_t))[:, None], z, z_upd)
+
+        return z_new, a, current_log_alphas
+
+    def get_grad(self, z, target, x=None):
+        z = z.detach().requires_grad_(True)
+        with torch.enable_grad():
+            grad = _get_grad(z=z, target=target, x=x)
+            return grad
