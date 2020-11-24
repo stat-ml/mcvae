@@ -6,6 +6,7 @@ class FC_decoder_mnist(nn.Module):
     def __init__(self, act_func, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
+            nn.BatchNorm1d(hidden_dim),
             nn.Linear(hidden_dim, 400),
             act_func(),
             nn.Linear(400, 784)
@@ -21,6 +22,7 @@ class CONV_decoder_mnist(nn.Module):
         super().__init__()
 
         self.net = nn.Sequential(
+            nn.BatchNorm2d(hidden_dim),
             nn.ConvTranspose2d(in_channels=hidden_dim, out_channels=25, kernel_size=5, stride=2),
             act_func(),
             nn.ConvTranspose2d(in_channels=25, out_channels=10, kernel_size=5, stride=2),
@@ -39,6 +41,7 @@ class FC_decoder_cifar(nn.Module):
     def __init__(self, act_func, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
+            nn.BatchNorm1d(hidden_dim),
             nn.Linear(hidden_dim, 400),
             act_func(),
             nn.Linear(400, 3072)
@@ -53,6 +56,7 @@ class CONV_decoder_cifar(nn.Module):
     def __init__(self, act_func, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
+            nn.BatchNorm2d(hidden_dim),
             nn.ConvTranspose2d(in_channels=hidden_dim, out_channels=25, kernel_size=5, stride=2),
             act_func(),
             nn.BatchNorm2d(25),

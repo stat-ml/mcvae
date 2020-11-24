@@ -164,7 +164,7 @@ class BaseMet(Base):
             log_priors += torch.mean(- 1. / 2 * torch.sum(p_transformed * p_transformed, 1))
             log_q += torch.mean(- 1. / 2 * torch.sum(p * p, 1))
 
-        log_r = -self.K * torch.log(2. * torch.ones_like(z[:, 0]))
+        log_r = -self.K * torch.log(torch.tensor(2., device=z.device, dtype=torch.float32))
 
         batch_size = mu.shape[0] // self.num_samples
         BCE = F.binary_cross_entropy_with_logits(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
@@ -186,8 +186,11 @@ class BaseMet(Base):
                                                                                                                         1))
         x_hat = self(z_transformed)
 
-        loss, BCE = self.loss_function(x_hat, x.repeat(self.num_samples, 1, 1, 1), mu, logvar, z, z_transformed,
-                                       sum_log_alpha, sum_log_jacobian, p_old, p_transformed)
+        loss, BCE = self.loss_function(recon_x=x_hat, x=x.repeat(self.num_samples, 1, 1, 1), mu=mu, logvar=logvar, z=z,
+                                       z_transformed=z_transformed,
+                                       sum_log_alpha=sum_log_alpha, sum_log_jacobian=sum_log_jacobian, p=p_old,
+                                       p_transformed=p_transformed)
+
         return loss, x_hat, z, all_acceptance, BCE
 
     def validation_step(self, batch, batch_idx):
