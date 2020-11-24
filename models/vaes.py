@@ -50,7 +50,6 @@ class Base(pl.LightningModule):
         return self.decode(z)
 
     def joint_density(self, ):
-        # Defines joint density (in fact, this is useful only for VAE with MCMC)
         def density(z, x):
             x_reconst = self(z)
             log_Pr = torch.distributions.Normal(loc=torch.tensor(0., device=z.device, dtype=torch.float32),
@@ -139,27 +138,31 @@ class BaseMet(Base):
     def run_transitions(self, z, x):
         sum_log_alpha = torch.zeros_like(z[:, 0])
         sum_log_jacobian = torch.zeros_like(z[:, 0])
+
+        p = torch.randn_like(z)
         z_transformed = z
-        p = None
+        p_transformed = p
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
         for i in range(self.K):
-            z_transformed, log_jac, current_log_alphas, directions, p = self.one_transition(current_num=i,
-                                                                                            z=z_transformed,
-                                                                                            p=p,
-                                                                                            x=x)
+            z_transformed, log_jac, current_log_alphas, directions, p_transformed = self.one_transition(current_num=i,
+                                                                                                        z=z_transformed,
+                                                                                                        p=p_transformed,
+                                                                                                        x=x)
             sum_log_alpha = sum_log_alpha + current_log_alphas
             sum_log_jacobian = sum_log_jacobian + log_jac
             all_acceptance = torch.cat([all_acceptance, directions[None]])
-        return z_transformed, sum_log_jacobian, sum_log_alpha, all_acceptance
+        return z_transformed, p_transformed, sum_log_jacobian, sum_log_alpha, all_acceptance, p
 
-    def loss_function(self, recon_x, x, mu, logvar, z, z_transformed, sum_log_alpha, sum_log_jacobian, p=None):
+    def loss_function(self, recon_x, x, mu, logvar, z, z_transformed, sum_log_alpha, sum_log_jacobian, p=None,
+                      p_transformed=None):
         ## logdensity of Variational family
         log_q = torch.mean(torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
             z).sum(1) + sum_log_alpha - sum_log_jacobian)
         ## logdensity of prior
         log_priors = torch.mean(-1. / 2 * torch.sum(z_transformed * z_transformed, 1))
         if p is not None:
-            log_priors += torch.mean(- 1. / 2 * torch.sum(p * p, 1))
+            log_priors += torch.mean(- 1. / 2 * torch.sum(p_transformed * p_transformed, 1))
+            log_q += torch.mean(- 1. / 2 * torch.sum(p * p, 1))
 
         log_r = -self.K * torch.log(2. * torch.ones_like(z[:, 0]))
 
@@ -174,17 +177,17 @@ class BaseMet(Base):
 
     def step(self, batch):
         x, _ = batch
-        import pdb
-        pdb.set_trace()
         z, mu, logvar = self.enc_rep(x)
-        z_transformed, sum_log_jacobian, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
-                                                                                              x=x.repeat(
-                                                                                                  self.num_samples,
-                                                                                                  1, 1, 1))
+        z_transformed, p_transformed, sum_log_jacobian, sum_log_alpha, all_acceptance, p_old = self.run_transitions(z=z,
+                                                                                                                    x=x.repeat(
+                                                                                                                        self.num_samples,
+                                                                                                                        1,
+                                                                                                                        1,
+                                                                                                                        1))
         x_hat = self(z_transformed)
 
         loss, BCE = self.loss_function(x_hat, x.repeat(self.num_samples, 1, 1, 1), mu, logvar, z, z_transformed,
-                                       sum_log_alpha, sum_log_jacobian)
+                                       sum_log_alpha, sum_log_jacobian, p_old, p_transformed)
         return loss, x_hat, z, all_acceptance, BCE
 
     def validation_step(self, batch, batch_idx):

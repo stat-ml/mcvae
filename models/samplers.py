@@ -47,10 +47,6 @@ class HMC(nn.Module):
         uniform = torch.distributions.Uniform(low=self.zero, high=self.one)
         std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
 
-        if self.partial_ref:
-            log_jac = p_old.shape[1] * torch.log(self.alpha) * torch.ones_like(z[:, 0])
-        else:
-            log_jac = torch.zeros_like(z_old[:, 0])
         ############ Then we compute new points and densities ############
         z_upd, p_upd = self.forward_step(z_old=z_old, p_old=p_old, target=target, x=x)
 
@@ -81,7 +77,7 @@ class HMC(nn.Module):
 
     def make_transition(self, z, target, x=None, p=None):
         if p is None:
-            p = torch.randn_like(z.shape)
+            p = torch.randn_like(z)
         if self.partial_ref:
             p = p * self.alpha + torch.sqrt(self.one - self.alpha ** 2) * torch.randn_like(p)
         z_new, p_new, a, current_log_alphas = self._make_transition(z_old=z,
@@ -106,7 +102,7 @@ class HMC(nn.Module):
         grad = torch.autograd.grad(s.sum(), z)[0]
         return grad
 
-    def run_chain(self, z_init, target, x, n_steps=100, return_trace=False, burnin=0):
+    def run_chain(self, z_init, target, x=None, n_steps=100, return_trace=False, burnin=0):
         samples = z_init
         if not return_trace:
             for _ in range(n_steps):
