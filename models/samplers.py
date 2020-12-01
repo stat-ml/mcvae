@@ -172,7 +172,7 @@ class MALA(nn.Module):
         target_log_density_upd = target(z=z_upd, x=x)
         target_log_density_old = target(z=z, x=x)
 
-        eps_reverse = (z - z_upd - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) * torch.sqrt(
+        eps_reverse = (z - z_upd - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / torch.sqrt(
             2 * self.step_size)
         proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
