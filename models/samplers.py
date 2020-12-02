@@ -180,7 +180,6 @@ class MALA(nn.Module):
         log_t = target_log_density_upd + proposal_density_numerator - target_log_density_old - proposal_density_denominator
         log_1_t = torch.logsumexp(torch.cat([torch.zeros_like(log_t).view(-1, 1),
                                              log_t.view(-1, 1)], dim=-1), dim=-1)  # log(1+t)
-        ###Ratio wrong: we need to add reverse proposal density (as in AISTAT paper)
 
         a, current_log_alphas = acceptance_ratio(log_t, log_1_t, use_barker=self.use_barker)
 

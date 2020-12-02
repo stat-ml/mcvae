@@ -1,14 +1,15 @@
 from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
-from models import VAE, IWAE, MetHMC_VAE, AIWAE, AIS_VAE
+from models import VAE, IWAE, AIWAE, AIS_VAE
 from utils import make_dataloaders, get_activations, str2bool
+import torch
 
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser = pl.Trainer.add_argparse_args(parser)
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
-    parser.add_argument("--model", default="VAE", choices=["VAE", "IWAE", "MetHMC_VAE", "AIWAE", "AIS_VAE"])
+    parser.add_argument("--model", default="VAE", choices=["VAE", "IWAE", "AIWAE", "AIS_VAE"])
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--val_batch_size", default=50, type=int)
     parser.add_argument("--hidden_dim", default=64, type=int)
@@ -42,11 +43,6 @@ if __name__ == '__main__':
     elif args.model == "IWAE":
         model = IWAE(act_func=act_func[args.act_func], num_samples=args.num_samples, hidden_dim=args.hidden_dim,
                      name=args.model, net_type=args.net_type, dataset=args.dataset)
-    elif args.model == 'MetHMC_VAE':
-        model = MetHMC_VAE(n_leapfrogs=args.n_leapfrogs, step_size=args.step_size, K=args.K,
-                           act_func=act_func[args.act_func],
-                           num_samples=args.num_samples, hidden_dim=args.hidden_dim,
-                           name=args.model, net_type=args.net_type, dataset=args.dataset, use_barker=args.use_barker)
     elif args.model == 'AIWAE':
         model = AIWAE(step_size=args.step_size, n_leapfrogs=args.n_leapfrogs, K=args.K,
                       use_barker=args.use_barker,
@@ -56,7 +52,7 @@ if __name__ == '__main__':
     elif args.model == 'AIS_VAE':
         model = AIS_VAE(step_size=args.step_size, K=args.K, use_barker=args.use_barker, num_samples=args.num_samples,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
-                        hidden_dim=args.hidden_dim)
+                        hidden_dim=args.hidden_dim, name=args.model)
     else:
         raise ValueError
 
