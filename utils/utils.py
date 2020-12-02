@@ -2,6 +2,18 @@ from torchvision import transforms, datasets
 from torch.utils.data import Dataset, DataLoader
 import torch
 import numpy as np
+import argparse
+
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
 class MyDataset(Dataset):
@@ -14,51 +26,39 @@ class MyDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, item):
-        sample = self.data[item]
+        sample = transforms.ToTensor()(self.data[item])
         if self.binarize:
             sample = torch.distributions.Bernoulli(probs=sample).sample()
         return sample, -1.
 
 
-def make_dataloaders(dataset, batch_size, val_batch_size, binarize=False, net_type='fc', **kwargs):
+def make_dataloaders(dataset, batch_size, val_batch_size, binarize=False, **kwargs):
     if dataset == 'mnist':
-        train_data = datasets.MNIST('./data', train=True, download=True).train_data.to(torch.float32)
-        train_data /= train_data.max()
-        if net_type == 'conv':
-            train_data = train_data.unsqueeze(1)
+        train_data = datasets.MNIST('./data', train=True, download=True).train_data.numpy()
         train_dataset = MyDataset(train_data, binarize=binarize)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 
-        val_data = datasets.MNIST('./data', train=False).test_data.to(torch.float32)
-        val_data /= val_data.max()
-        if net_type == 'conv':
-            val_data = val_data.unsqueeze(1)
+        val_data = datasets.MNIST('./data', train=False).test_data.numpy()
         val_dataset = MyDataset(val_data, binarize=binarize)
         val_loader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False, **kwargs)
 
     elif dataset == 'fashionmnist':
         train_data = datasets.FashionMNIST('./data', train=True, download=True).train_data.to(torch.float32)
         train_data /= train_data.max()
-        if net_type == 'conv':
-            train_data = train_data.unsqueeze(1)
         train_dataset = MyDataset(train_data, binarize=binarize)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 
         val_data = datasets.FashionMNIST('./data', train=False).test_data.to(torch.float32)
         val_data /= val_data.max()
-        if net_type == 'conv':
-            val_data = val_data.unsqueeze(1)
         val_dataset = MyDataset(val_data, binarize=binarize)
         val_loader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False, **kwargs)
 
     elif dataset == 'cifar':
-        train_data = datasets.CIFAR10('./data', train=True, download=True).data.to(torch.float32)
-        train_data /= train_data.max()
+        train_data = datasets.CIFAR10('./data', train=True, download=True).data
         train_dataset = MyDataset(train_data, binarize=False)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 
-        val_data = datasets.CIFAR10('./data', train=False).data.to(torch.float32)
-        val_data /= val_data.max()
+        val_data = datasets.CIFAR10('./data', train=False).data
         val_dataset = MyDataset(val_data, binarize=False)
         val_loader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False, **kwargs)
 

@@ -7,6 +7,7 @@ import torchvision
 from models.samplers import HMC, MALA
 from models.encoders import get_encoder
 from models.decoders import get_decoder
+from abc import abstractmethod
 
 
 class Base(pl.LightningModule):
@@ -38,10 +39,11 @@ class Base(pl.LightningModule):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def enc_rep(self, x):
+    def enc_rep(self, x, expand=True):
         mu, logvar = self.encode(x)
-        mu = mu.repeat(self.num_samples, 1)
-        logvar = logvar.repeat(self.num_samples, 1)
+        if expand:
+            mu = mu.repeat(self.num_samples, 1)
+            logvar = logvar.repeat(self.num_samples, 1)
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
@@ -53,7 +55,6 @@ class Base(pl.LightningModule):
 
     def joint_density(self, ):
         def density(z, x):
-            batch_size = z.shape[0] // self.num_samples
             x_reconst = self(z)
             log_Pr = torch.distributions.Normal(loc=torch.tensor(0., device=z.device, dtype=torch.float32),
                                                 scale=torch.tensor(1., device=z.device, dtype=torch.float32)).log_prob(
@@ -74,6 +75,12 @@ class Base(pl.LightningModule):
             val_loss_dec = torch.stack([x['val_loss_dec'] for x in outputs]).mean()
             self.logger.experiment.add_scalar(f'avg_val_loss_enc/{self.name}', val_loss, self.current_epoch)
             self.logger.experiment.add_scalar(f'avg_val_loss_dec/{self.name}', val_loss_dec, self.current_epoch)
+
+        if "acceptance_rate" in outputs[0].keys():
+            acceptance = torch.stack([x['acceptance_rate'] for x in outputs]).mean(0)
+            for i in range(len(acceptance)):
+                self.logger.experiment.add_scalar(f'acceptance_rate_{i}/{self.name}', acceptance[i].item(),
+                                                  self.current_epoch)
 
         if self.dataset.lower().find('cifar') > -1:
             x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 32, 32))
@@ -142,107 +149,6 @@ class IWAE(Base):
         return loss, x_hat, z
 
 
-class AIWAE(Base):
-    def __init__(self, step_size, K, n_leapfrogs, use_barker=True, beta=None, **kwargs):
-        super().__init__(**kwargs)
-        self.K = K
-        if beta is None:
-            beta = torch.tensor(np.linspace(0., 1., self.K), dtype=torch.float32)
-        self.register_buffer('beta', beta)
-        self.transitions = nn.ModuleList(
-            [HMC(n_leapfrogs=n_leapfrogs, step_size=step_size, use_barker=use_barker)
-             for _ in range(self.K)])
-
-    def configure_optimizers(self):
-        return [torch.optim.Adam(self.decoder_net.parameters(),
-                                 lr=1e-3),
-                torch.optim.Adam(self.encoder_net.parameters(), lr=1e-3)], []
-
-    def one_transition(self, current_num, z, x, annealing_logdens):
-        z_new, _, directions, current_log_alphas = self.transitions[current_num].make_transition(z=z, x=x,
-                                                                                                 target=annealing_logdens)
-        return z_new, current_log_alphas, directions
-
-    def run_transitions(self, z, x, mu, logvar):
-        init_logdens = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
-            z).sum(-1)
-        annealing_logdens = lambda beta: lambda x, z: (1. - beta) * init_logdens(z=z) + beta * self.joint_density()(z=z,
-                                                                                                                    x=x)
-        z_transformed = z
-        sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_density()(z=z, x=x) - init_logdens(z))
-        all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
-
-        for i in range(1, self.K - 1):
-            z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
-                                                                                z=z_transformed,
-                                                                                x=x,
-                                                                                annealing_logdens=annealing_logdens(
-                                                                                    self.beta[i]))
-            sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
-                    self.joint_density()(z=z_transformed, x=x) - init_logdens(z=z_transformed))
-            all_acceptance = torch.cat([all_acceptance, directions[None]])
-
-        z_transformed, current_log_alphas, directions = self.one_transition(current_num=self.K - 1,
-                                                                            z=z_transformed,
-                                                                            x=x,
-                                                                            annealing_logdens=annealing_logdens(
-                                                                                self.beta[self.K - 1]))
-        all_acceptance = torch.cat([all_acceptance, directions[None]])
-
-        return z_transformed, sum_log_weights, all_acceptance
-
-    def training_step(self, batch, batch_idx, optimizer_idx):
-        x, _ = batch
-        if optimizer_idx == 0:  # decoder
-            with torch.no_grad():
-                z, mu, logvar = self.enc_rep(x)
-                x = x.repeat(self.num_samples, 1, 1, 1)
-                z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z, x=x,
-                                                                                      mu=mu,
-                                                                                      logvar=logvar)
-                x_hat = self(z_transformed)
-            loss = self.loss_function(z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part=False)
-        if optimizer_idx == 1:  # encoder
-            z, mu, logvar = self.enc_rep(x)
-            x = x.repeat(self.num_samples, 1, 1, 1)
-            x_hat = self(z)
-            loss = self.loss_function(z, x_hat, x, mu, logvar, None, inference_part=True)
-        return {"loss": loss}
-
-    def loss_function(self, z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part):
-        batch_size = mu.shape[0] // self.num_samples
-        if inference_part:
-            BCE = F.binary_cross_entropy_with_logits(x_hat.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
-                                                     reduction='none').view(
-                (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
-            KLD = -0.5 * torch.mean((1 + logvar - mu.pow(2) - logvar.exp()).view(
-                (self.num_samples, -1, self.hidden_dim)).mean(0).sum(-1))
-            loss = BCE + KLD
-        else:
-            log_weight = sum_log_weights - torch.max(sum_log_weights, 0)[0]  # for stability
-            weight = torch.exp(log_weight)
-            weight = weight / torch.sum(weight, 0)
-            loss = torch.mean(-torch.sum(weight * self.joint_density()(z=z_transformed, x=x), 0))
-        return loss
-
-    def step(self, batch):
-        x, _ = batch
-        z, mu, logvar = self.enc_rep(x)
-        x = x.repeat(self.num_samples, 1, 1, 1)
-
-        z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z, x=x,
-                                                                              mu=mu,
-                                                                              logvar=logvar)
-        x_hat = self(z_transformed)
-        loss_enc = self.loss_function(z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part=False)
-        loss_dec = self.loss_function(z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part=True)
-        return loss_enc, loss_dec
-
-    def validation_step(self, batch, batch_idx):
-        output = self.step(batch)
-        return {"val_loss_enc": output[0], "val_loss_dec": output[1]}
-
-
 class BaseMet(Base):
     def step(self, batch):
         x, _ = batch
@@ -277,7 +183,7 @@ class BaseMet(Base):
 
 
 class MetHMC_VAE(BaseMet):
-    def __init__(self, n_leapfrogs, step_size, K, use_barker=True, **kwargs):
+    def __init__(self, n_leapfrogs, step_size, K, use_barker, **kwargs):
         super().__init__(**kwargs)
         self.K = K
         self.transitions = nn.ModuleList(
@@ -334,59 +240,187 @@ class MetHMC_VAE(BaseMet):
         return loss
 
 
-class AIS_VAE(BaseMet):
-    def __init__(self, step_size, K, use_barker=True, annealing_learnable=False, beta=None, **kwargs):
+class BaseAIS(Base):
+    def __init__(self, step_size, K, beta=None, **kwargs):
         super().__init__(**kwargs)
         self.K = K
-        self.transitions = nn.ModuleList(
-            [MALA(step_size=step_size, use_barker=use_barker, learnable=True)
-             for _ in range(self.K)])
-
-        self.annealing_learnable = annealing_learnable
+        self.epsilons = [step_size for _ in range(self.K)]
+        self.epsilon_target = 0.6
+        self.epsilon_decrease_alpha = 0.998
+        self.epsilon_increase_alpha = 1.002
+        self.epsilon_min = 0.001
+        self.epsilon_max = 0.3
         if beta is None:
-            beta = np.linspace(0.1, 1., K)
-        self.beta = nn.Parameter(torch.tensor(beta, dtype=torch.float32), requires_grad=self.annealing_learnable)
+            beta = torch.tensor(np.linspace(0., 1., self.K), dtype=torch.float32)
+        self.register_buffer('beta', beta)
 
     def configure_optimizers(self):
-        return [torch.optim.Adam(self.decoder_net.parameters(),
-                                 lr=1e-3),
-                torch.optim.Adam(list(self.encoder_net.parameters()) + list(self.transitions.parameters()),
-                                 lr=1e-3)], []
+        lambda_lr = lambda epoch: 10 ** (-epoch / 7.0)
+        decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-4)
+        decoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(decoder_optimizer, lambda_lr)
+
+        encoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-4)
+        encoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(encoder_optimizer, lambda_lr)
+        return [decoder_optimizer, encoder_optimizer], [decoder_scheduler_lr, encoder_scheduler_lr]
+
+    def run_transitions(self, z_, x, mu, logvar):
+        init_logdens = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
+            z).sum(-1)
+        annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens(z=z) + beta * self.joint_density()(z=z,
+                                                                                                                    x=x)
+        z_transformed = z_
+        sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_density()(z=z_, x=x) - init_logdens(z_))
+        all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
+
+        for i in range(1, self.K - 1):
+            z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
+                                                                                z=z_transformed,
+                                                                                x=x,
+                                                                                annealing_logdens=annealing_logdens(
+                                                                                    beta=self.beta[i]))
+            sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
+                    self.joint_density()(z=z_transformed, x=x) - init_logdens(z=z_transformed))
+            all_acceptance = torch.cat([all_acceptance, directions[None]])
+
+        z_transformed, current_log_alphas, directions = self.one_transition(current_num=self.K - 2,
+                                                                            z=z_transformed,
+                                                                            x=x,
+                                                                            annealing_logdens=annealing_logdens(
+                                                                                self.beta[self.K - 1]))
+        all_acceptance = torch.cat([all_acceptance, directions[None]])
+        self.update_stepsize(all_acceptance.mean(1))
+
+        return z_transformed, sum_log_weights, all_acceptance
+
+    def update_stepsize(self, accept_rate):
+        accept_rate = list(accept_rate.cpu().data.squeeze().numpy())
+        for l in range(0, self.K - 1):
+            if accept_rate[l] < self.epsilon_target:
+                self.epsilons[l] *= self.epsilon_decrease_alpha
+            else:
+                self.epsilons[l] *= self.epsilon_increase_alpha
+
+            if self.epsilons[l] < self.epsilon_min:
+                self.epsilons[l] = self.epsilon_min
+            if self.epsilons[l] > self.epsilon_max:
+                self.epsilons[l] = self.epsilon_max
+            self.transitions[l].log_stepsize.data = torch.tensor(np.log(self.epsilons[l]), dtype=torch.float32,
+                                                                 device=self.transitions[l].log_stepsize.device)
+
+    def step(self, batch):
+        x, _ = batch
+        z, mu, logvar = self.enc_rep(x)
+        x = x.repeat(self.num_samples, 1, 1, 1)
+
+        z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z_=z, x=x,
+                                                                              mu=mu,
+                                                                              logvar=logvar)
+        x_hat = self(z_transformed)
+        loss_enc = self.loss_function(z, x_hat, x, mu, logvar, sum_log_weights, inference_part=False)
+        loss_dec = self.loss_function(z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part=True)
+        return loss_enc, loss_dec, all_acceptance
+
+    def validation_step(self, batch, batch_idx):
+        output = self.step(batch)
+        return {"val_loss_enc": output[0], "val_loss_dec": output[1], "acceptance_rate": output[2].mean(1)}
+
+
+class AIWAE(BaseAIS):
+    def __init__(self, n_leapfrogs, use_barker, **kwargs):
+        super().__init__(**kwargs)
+        self.transitions = nn.ModuleList(
+            [HMC(n_leapfrogs=n_leapfrogs, step_size=self.epsilons[0], use_barker=use_barker)
+             for _ in range(self.K - 1)])
+
+    def one_transition(self, current_num, z, x, annealing_logdens):
+        z_new, _, directions, current_log_alphas = self.transitions[current_num].make_transition(z=z, x=x,
+                                                                                                 target=annealing_logdens)
+        return z_new, current_log_alphas, directions
+
+    def training_step(self, batch, batch_idx, optimizer_idx):
+        x, _ = batch
+        if optimizer_idx == 0:  # decoder
+            with torch.no_grad():
+                z, mu, logvar = self.enc_rep(x)
+                x = x.repeat(self.num_samples, 1, 1, 1)
+                z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z_=z, x=x,
+                                                                                      mu=mu,
+                                                                                      logvar=logvar)
+                x_hat = self(z_transformed)
+            loss = self.loss_function(z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part=False)
+        else:  # encoder
+            z, mu, logvar = self.enc_rep(x, expand=False)
+            x_hat = self(z)
+            loss = self.loss_function(z, x_hat, x, mu, logvar, None, inference_part=True)
+        return {"loss": loss}
+
+    def loss_function(self, z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part):
+        batch_size = mu.shape[0] // self.num_samples
+        if inference_part:
+            BCE = F.binary_cross_entropy_with_logits(x_hat.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
+                                                     reduction='none').sum(-1).mean()
+            KLD = -0.5 * torch.mean((1 + logvar - mu.pow(2) - logvar.exp()).sum(-1))
+            loss = BCE + KLD
+        else:
+            sum_log_weights = sum_log_weights.view((self.num_samples, batch_size))
+            log_weight = sum_log_weights - torch.max(sum_log_weights, 0)[0]  # for stability
+            weight = torch.exp(log_weight)
+            weight = weight / torch.sum(weight, 0)
+            loss = -torch.mean(
+                torch.sum(weight * self.joint_density()(z=z_transformed, x=x).view((self.num_samples, batch_size)), 0))
+        return loss
+
+
+class AIS_VAE(BaseAIS):
+    def __init__(self, use_barker, **kwargs):
+        super().__init__(**kwargs)
+        self.transitions = nn.ModuleList(
+            [MALA(step_size=self.epsilons[0], use_barker=use_barker, learnable=False)
+             for _ in range(self.K - 1)])
 
     def one_transition(self, current_num, z, x, annealing_logdens):
         z_new, directions, current_log_alphas = self.transitions[current_num].make_transition(z=z, x=x,
                                                                                               target=annealing_logdens)
         return z_new, current_log_alphas, directions
 
-    def run_transitions(self, z, x, mu, logvar):
-        sum_log_alpha = torch.zeros_like(z[:, 0])
-        sum_log_weights = torch.zeros_like(z[:, 0])
-
+    def run_transitions(self, z_, x, mu, logvar):
+        sum_log_alpha = torch.zeros_like(z_[:, 0])
         init_logdens = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
-            z).sum(-1)  # detach mu and logvar?
-        annealing_logdens = lambda beta: lambda x, z: (1. - beta) * init_logdens(z=z) + beta * self.joint_density()(z=z,
+            z).sum(-1)
+        annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens(z=z) + beta * self.joint_density()(z=z,
                                                                                                                     x=x)
-        z_transformed = z
-        sum_log_weights += (self.beta[0] - 0.) * (self.joint_density()(z=z, x=x) - init_logdens(z))
-
+        z_transformed = z_
+        sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_density()(z=z_, x=x) - init_logdens(z_))
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
-        for i in range(0, self.K - 1):
-            z_transformed, current_log_alphas, directions = self.one_transition(current_num=i,
+
+        for i in range(1, self.K - 1):
+            z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
                                                                                 z=z_transformed,
                                                                                 x=x,
                                                                                 annealing_logdens=annealing_logdens(
-                                                                                    self.beta[i]))
+                                                                                    beta=self.beta[i]))
             sum_log_alpha += current_log_alphas
             sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
                     self.joint_density()(z=z_transformed, x=x) - init_logdens(z=z_transformed))
             all_acceptance = torch.cat([all_acceptance, directions[None]])
+
+        z_transformed, current_log_alphas, directions = self.one_transition(current_num=self.K - 2,
+                                                                            z=z_transformed,
+                                                                            x=x,
+                                                                            annealing_logdens=annealing_logdens(
+                                                                                self.beta[self.K - 1]))
+        sum_log_alpha += current_log_alphas  # ??
+        all_acceptance = torch.cat([all_acceptance, directions[None]])
+        self.update_stepsize(all_acceptance.mean(1))
+
         return z_transformed, sum_log_alpha, sum_log_weights, all_acceptance
 
     def step(self, batch):
         x, _ = batch
-        z, mu, logvar = self.enc_rep(x)
-        z_transformed, sum_log_alpha, sum_log_weights, all_acceptance = self.run_transitions(z=z, x=x.repeat(
-            self.num_samples, 1, 1, 1),
+        z, mu, logvar = self.enc_rep(x, expand=True)
+        x = x.repeat(self.num_samples, 1, 1, 1)
+        z_transformed, sum_log_alpha, sum_log_weights, all_acceptance = self.run_transitions(z_=z,
+                                                                                             x=x,
                                                                                              mu=mu,
                                                                                              logvar=logvar)
         x_hat = self(z_transformed)
@@ -395,39 +429,36 @@ class AIS_VAE(BaseMet):
 
         return loss, x_hat, z, all_acceptance
 
-    def loss_function(self, sum_log_alpha=None, sum_log_weights=None, inference_part=None, mu=None, logvar=None,
-                      x_hat=None, x=None):
+    def loss_function(self, sum_log_alpha=None, sum_log_weights=None, inference_part=None):
+        batch_size = sum_log_weights.shape[0] // self.num_samples
+        elbo_est = torch.mean(sum_log_weights.view((self.num_samples, batch_size)).sum(0))
         if inference_part:
-            batch_size = mu.shape[0] // self.num_samples
-            BCE = F.binary_cross_entropy_with_logits(x_hat, x.view(mu.shape[0], -1), reduction='none').view(
-                (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
-            KLD = -0.5 * torch.mean((1 + logvar - mu.pow(2) - logvar.exp()).view(
-                (self.num_samples, -1, self.hidden_dim)).mean(0).sum(-1))
-            loss = BCE + KLD
+            loss = -(elbo_est + elbo_est.detach() * torch.mean(
+                sum_log_alpha.view((self.num_samples, batch_size)).sum(0)))
             return loss
         else:
-            elbo_est = sum_log_weights.mean()
-            # optimize grad_elbo for phi, elbo_est for theta (separate optimizers)
-            grad_elbo = -(
-                    elbo_est + elbo_est.detach() * sum_log_alpha.mean())  ###To think about : detach target in alpha terms to keep good objective for target
-
-            return grad_elbo, elbo_est
+            loss = -elbo_est
+            ###To think about : detach target in alpha terms to keep good objective for target
+        return loss
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x, _ = batch
+        inference_part = {0: False, 1: True}[optimizer_idx]
+
         if optimizer_idx == 0:  # decoder
             with torch.no_grad():
                 z, mu, logvar = self.enc_rep(x)
-
-            z_transformed, sum_log_alpha, sum_log_weights, all_acceptance = self.run_transitions(z=z, x=x.repeat(
-                self.num_samples, 1, 1, 1),
-                                                                                                 mu=mu,
-                                                                                                 logvar=logvar)
-
-            loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
-                                      inference_part=False)
-        if optimizer_idx == 1:  # encoder
+        else:  # encoder
             z, mu, logvar = self.enc_rep(x)
-            x_hat = self(z)
-            loss = self.loss_function(x_hat=x_hat, x=x, mu=mu, logvar=logvar, inference_part=True)
+
+        x = x.repeat(self.num_samples, 1, 1, 1)
+
+        z_transformed, sum_log_alpha, sum_log_weights, all_acceptance = self.run_transitions(z_=z,
+                                                                                             x=x,
+                                                                                             mu=mu,
+                                                                                             logvar=logvar)
+
+        loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
+                                  inference_part=inference_part)
+
         return {"loss": loss}

@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
 from models import VAE, IWAE, MetHMC_VAE, AIWAE, AIS_VAE
-from utils import make_dataloaders, get_activations
+from utils import make_dataloaders, get_activations, str2bool
 
 if __name__ == '__main__':
     parser = ArgumentParser()
@@ -21,8 +21,8 @@ if __name__ == '__main__':
     parser.add_argument("--K", type=int, default=3)
     parser.add_argument("--n_leapfrogs", type=int, default=3)
     parser.add_argument("--step_size", type=float, default=0.01)
-    parser.add_argument("--use_barker", type=bool, default=True)
-    parser.add_argument("--binarize", type=bool, default=False)
+    parser.add_argument("--use_barker", type=str2bool, default=True)
+    parser.add_argument("--binarize", type=str2bool, default=False)
 
     act_func = get_activations()
 
@@ -35,7 +35,6 @@ if __name__ == '__main__':
                                                 batch_size=args.batch_size,
                                                 val_batch_size=args.val_batch_size,
                                                 binarize=args.binarize,
-                                                net_type=args.net_type,
                                                 **kwargs)
     if args.model == "VAE":
         model = VAE(act_func=act_func[args.act_func], num_samples=args.num_samples, hidden_dim=args.hidden_dim,

@@ -9,15 +9,16 @@ def acceptance_ratio(log_t, log_1_t, use_barker):
         current_log_alphas_pre = torch.min(torch.zeros_like(log_t), log_t)
 
     log_probs = torch.log(torch.rand_like(log_t))
-    a = torch.where(log_probs < current_log_alphas_pre, torch.ones_like(log_t), torch.zeros_like(log_t))
+    a = log_probs <= current_log_alphas_pre
 
     if use_barker:
-        current_log_alphas = torch.where((a == 0.), -log_1_t, current_log_alphas_pre)
+        current_log_alphas = current_log_alphas_pre
+        current_log_alphas[~a] = (-log_t)[~a]
     else:
-        expression = torch.ones_like(log_t) - torch.exp(log_t)
-        expression = torch.where(expression <= torch.ones_like(log_t) * 1e-8, torch.ones_like(log_t) * 1e-8, expression)
+        expression = (torch.ones_like(current_log_alphas_pre) - torch.exp(current_log_alphas_pre)).clamp(min=1e-8)
         corr_expression = torch.log(expression)
-        current_log_alphas = torch.where((a == 0), corr_expression, current_log_alphas_pre)
+        current_log_alphas = current_log_alphas_pre
+        current_log_alphas[~a] = corr_expression[~a]
 
     return a, current_log_alphas
 
@@ -70,7 +71,6 @@ class HMC(nn.Module):
         return z_, p_
 
     def _make_transition(self, z_old, target, p_old=None, x=None):
-        uniform = torch.distributions.Uniform(low=self.zero, high=self.one)
         std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
 
         ############ Then we compute new points and densities ############
@@ -85,10 +85,13 @@ class HMC(nn.Module):
 
         a, current_log_alphas = acceptance_ratio(log_t=log_t, log_1_t=log_1_t, use_barker=self.use_barker)
 
-        z_new = torch.where((a == 0.)[:, None], z_old, z_upd)
-        p_new = torch.where((a == 0.)[:, None], -p_old, -p_upd)  ##
+        z_new = z_upd
+        z_new[~a] = z_old[~a]
 
-        return z_new, p_new, a, current_log_alphas
+        p_new = -p_upd
+        p_new[~a] = -p_old[~a]
+
+        return z_new, p_new, a.to(torch.float32), current_log_alphas
 
     def make_transition(self, z, target, x=None, p=None):
         if p is None:
@@ -101,9 +104,6 @@ class HMC(nn.Module):
 
     def forward_step(self, z_old, x=None, target=None, p_old=None):
         z_, p_ = self._forward_step(z_old=z_old, x=x, target=target, p_old=p_old)
-        if not self.learnable:
-            z_.requires_grad_(False)
-            p_.requires_grad_(False)
         return z_, p_
 
     def get_grad(self, z, target, x=None):
@@ -184,9 +184,10 @@ class MALA(nn.Module):
 
         a, current_log_alphas = acceptance_ratio(log_t, log_1_t, use_barker=self.use_barker)
 
-        z_new = torch.where((a == torch.zeros_like(log_t))[:, None], z, z_upd)
+        z_new = z_upd
+        z_new[~a] = z[~a]
 
-        return z_new, a, current_log_alphas
+        return z_new, a.to(torch.float32), current_log_alphas
 
     def get_grad(self, z, target, x=None):
         z = z.detach().requires_grad_(True)
