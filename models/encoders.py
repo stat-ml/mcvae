@@ -1,5 +1,6 @@
-import torch
 import torch.nn as nn
+
+from models.aux import Down, DoubleConv
 
 
 class FC_encoder_mnist(nn.Module):
@@ -17,23 +18,22 @@ class FC_encoder_mnist(nn.Module):
         return self.net(x)
 
 
-class CONV_encoder_mnist(nn.Module):
-    def __init__(self, act_func, hidden_dim):
+class CONV_encoder(nn.Module):
+    def __init__(self, act_func, hidden_dim, n_channels, shape, bilinear=True):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5,
-                      stride=2, padding=2),
-            act_func(),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5,
-                      stride=2, padding=2),
-            act_func(),
-            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=5,
-                      stride=2, padding=2),
-            act_func(),
+        self.n_channels = n_channels
+        self.bilinear = bilinear
+        factor = 2 if bilinear else 1
+        num_maps = 16
+        num_units = ((shape // 8) ** 2) * (8 * num_maps // factor)
+
+        self.net = nn.Sequential(  # n
+            DoubleConv(n_channels, num_maps, act_func),
+            Down(num_maps, 2 * num_maps, act_func),
+            Down(2 * num_maps, 4 * num_maps, act_func),
+            Down(4 * num_maps, 8 * num_maps // factor, act_func),
             nn.Flatten(),
-            nn.Linear(in_features=512, out_features=450),
-            act_func(),
-            nn.Linear(in_features=450, out_features=2 * hidden_dim)
+            nn.Linear(num_units, 2 * hidden_dim)
         )
 
     def forward(self, x):
@@ -55,41 +55,18 @@ class FC_encoder_cifar(nn.Module):
         return self.net(x)
 
 
-class CONV_encoder_cifar(nn.Module):
-    def __init__(self, act_func, hidden_dim):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=5, kernel_size=5),
-            act_func(),
-            nn.BatchNorm2d(5),
-            nn.Conv2d(in_channels=5, out_channels=10, kernel_size=5),
-            act_func(),
-            nn.BatchNorm2d(10),
-            nn.Conv2d(in_channels=10, out_channels=20, kernel_size=5),
-            act_func(),
-            nn.BatchNorm2d(20),
-            nn.Conv2d(in_channels=20, out_channels=20, kernel_size=5),
-            act_func(),
-            nn.Flatten(),
-            nn.Linear(5120, 2 * hidden_dim)
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-def get_encoder(net_type, act_func, hidden_dim, dataset):
-    if str(dataset).lower().find('mnist') > -1:
+def get_encoder(net_type, act_func, hidden_dim, dataset, shape):
+    if str(dataset).lower().find('mni') > -1:
         if net_type == 'fc':
             return FC_encoder_mnist(act_func=act_func,
                                     hidden_dim=hidden_dim)
         elif net_type == 'conv':
-            return CONV_encoder_mnist(act_func=act_func,
-                                      hidden_dim=hidden_dim)
-    elif str(dataset).lower().find('cifar') > -1:
+            return CONV_encoder(act_func=act_func,
+                                hidden_dim=hidden_dim, n_channels=1, shape=shape)
+    else:
         if net_type == 'fc':
             return FC_encoder_cifar(act_func=act_func,
                                     hidden_dim=hidden_dim)
         elif net_type == 'conv':
-            return CONV_encoder_cifar(act_func=act_func,
-                                      hidden_dim=hidden_dim)
+            return CONV_encoder(act_func=act_func,
+                                hidden_dim=hidden_dim, n_channels=3, shape=shape)

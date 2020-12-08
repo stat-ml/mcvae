@@ -29,6 +29,21 @@ def _get_grad(z, target, x=None):
     return grad
 
 
+def run_chain(kernel, z_init, target, x=None, n_steps=100, return_trace=False, burnin=0):
+    samples = z_init
+    if not return_trace:
+        for _ in range(n_steps):
+            samples = kernel.make_transition(z=samples, target=target, x=x)[0]
+        return samples
+    else:
+        final = torch.tensor([], device=z_init.device, dtype=torch.float32)
+        for i in range(burnin + n_steps):
+            samples = kernel.make_transition(z=samples, target=target, x=x)[0]
+            if i >= burnin:
+                final = torch.cat([final, samples])
+        return final
+
+
 class HMC(nn.Module):
     def __init__(self, n_leapfrogs, step_size, use_barker=False, partial_ref=False, learnable=False):
         '''
@@ -111,20 +126,6 @@ class HMC(nn.Module):
         with torch.enable_grad():
             grad = _get_grad(z=z, target=target, x=x)
             return grad
-
-    def run_chain(self, z_init, target, x=None, n_steps=100, return_trace=False, burnin=0):
-        samples = z_init
-        if not return_trace:
-            for _ in range(n_steps):
-                samples = self.make_transition(z=samples, target=target, x=x)[0]
-            return samples
-        else:
-            final = torch.tensor([], device=self.one.device, dtype=torch.float32)
-            for i in range(burnin + n_steps):
-                samples = self.make_transition(z=samples, target=target, x=x)[0]
-                if i >= burnin:
-                    final = torch.cat([final, samples])
-            return final
 
 
 class MALA(nn.Module):

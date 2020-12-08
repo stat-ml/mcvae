@@ -1,5 +1,6 @@
-import torch
+from models.aux import Up, OutConv
 import torch.nn as nn
+import numpy as np
 
 
 class View(nn.Module):
@@ -34,24 +35,21 @@ class FC_decoder_mnist(nn.Module):
         return self.net(z)
 
 
-class CONV_decoder_mnist(nn.Module):
-    def __init__(self, act_func, hidden_dim):
+class CONV_decoder(nn.Module):
+    def __init__(self, act_func, hidden_dim, n_channels, shape, bilinear=True):
         super().__init__()
-
+        self.bilinear = bilinear
+        factor = 2 if bilinear else 1
+        num_maps = 16
+        shape_init = shape
+        shape = shape // 8
         self.net = nn.Sequential(
-            nn.Linear(in_features=hidden_dim, out_features=450),
-            act_func(),
-            nn.Linear(in_features=450, out_features=512),
-            act_func(),
-            View((32, 4, 4)),
-            nn.ConvTranspose2d(in_channels=32, out_channels=32, kernel_size=5,
-                               stride=2, padding=2),
-            act_func(),
-            nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=5,
-                               stride=2, padding=2, output_padding=1),
-            act_func(),
-            nn.ConvTranspose2d(in_channels=16, out_channels=1, kernel_size=5,
-                               stride=2, padding=2, output_padding=1),
+            nn.Linear(hidden_dim, (8 * num_maps // factor) * (shape ** 2)),
+            View(((8 * num_maps // factor), shape, shape)),
+            Up(8 * num_maps // factor, 4 * num_maps // factor, act_func, bilinear, (shape * 2, shape * 2)),
+            Up(4 * num_maps // factor, 2 * num_maps // factor, act_func, bilinear, (shape * 4, shape * 4)),
+            Up(2 * num_maps // factor, num_maps, act_func, bilinear, (shape_init, shape_init)),
+            OutConv(num_maps, n_channels)
         )
         self.hidden_dim = hidden_dim
 
@@ -63,7 +61,6 @@ class FC_decoder_cifar(nn.Module):
     def __init__(self, act_func, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.BatchNorm1d(hidden_dim),
             nn.Linear(hidden_dim, 400),
             act_func(),
             nn.Linear(400, 3072)
@@ -74,41 +71,18 @@ class FC_decoder_cifar(nn.Module):
         return self.net(z)
 
 
-class CONV_decoder_cifar(nn.Module):
-    def __init__(self, act_func, hidden_dim):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.BatchNorm2d(hidden_dim),
-            nn.ConvTranspose2d(in_channels=hidden_dim, out_channels=25, kernel_size=5, stride=2),
-            act_func(),
-            nn.BatchNorm2d(25),
-            nn.ConvTranspose2d(in_channels=25, out_channels=10, kernel_size=5, stride=2),
-            act_func(),
-            nn.BatchNorm2d(10),
-            nn.ConvTranspose2d(in_channels=10, out_channels=5, kernel_size=5, stride=2),
-            act_func(),
-            nn.BatchNorm2d(5),
-            nn.ConvTranspose2d(in_channels=5, out_channels=3, kernel_size=4, stride=1),
-        )
-        self.hidden_dim = hidden_dim
-
-    def forward(self, z):
-        z = z.view(-1, self.hidden_dim, 1, 1)
-        return self.net(z)
-
-
-def get_decoder(net_type, act_func, hidden_dim, dataset):
-    if str(dataset).lower().find('mnist') > -1:
+def get_decoder(net_type, act_func, hidden_dim, dataset, shape):
+    if str(dataset).lower().find('mni') > -1:
         if net_type == 'fc':
             return FC_decoder_mnist(act_func=act_func,
                                     hidden_dim=hidden_dim)
         elif net_type == 'conv':
-            return CONV_decoder_mnist(act_func=act_func,
-                                      hidden_dim=hidden_dim)
-    elif str(dataset).lower().find('cifar') > -1:
+            return CONV_decoder(act_func=act_func,
+                                hidden_dim=hidden_dim, n_channels=1, shape=shape)
+    else:
         if net_type == 'fc':
             return FC_decoder_cifar(act_func=act_func,
                                     hidden_dim=hidden_dim)
         elif net_type == 'conv':
-            return CONV_decoder_cifar(act_func=act_func,
-                                      hidden_dim=hidden_dim)
+            return CONV_decoder(act_func=act_func,
+                                hidden_dim=hidden_dim, n_channels=3, shape=shape)

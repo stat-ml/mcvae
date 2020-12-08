@@ -1,9 +1,10 @@
 from argparse import ArgumentParser
+
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
+
 from models import VAE, IWAE, AIWAE, AIS_VAE
 from utils import make_dataloaders, get_activations, str2bool
-import torch
 
 if __name__ == '__main__':
     parser = ArgumentParser()
@@ -13,7 +14,7 @@ if __name__ == '__main__':
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--val_batch_size", default=50, type=int)
     parser.add_argument("--hidden_dim", default=64, type=int)
-    parser.add_argument("--dataset", default='cifar', choices=['mnist', 'fashionmnist', 'cifar', 'celeba'])
+    parser.add_argument("--dataset", default='cifar', choices=['mnist', 'fashionmnist', 'cifar', 'omniglot', 'celeba'])
     parser.add_argument("--num_samples", default=1, type=int)
     parser.add_argument("--act_func", default="tanh",
                         choices=["relu", "leakyrelu", "tanh", "logsigmoid", "logsoftmax", "softplus"])
@@ -37,27 +38,29 @@ if __name__ == '__main__':
                                                 val_batch_size=args.val_batch_size,
                                                 binarize=args.binarize,
                                                 **kwargs)
+    image_shape = train_loader.dataset.shape_size
     if args.model == "VAE":
-        model = VAE(act_func=act_func[args.act_func], num_samples=args.num_samples, hidden_dim=args.hidden_dim,
+        model = VAE(shape=image_shape, act_func=act_func[args.act_func],
+                    num_samples=args.num_samples, hidden_dim=args.hidden_dim,
                     net_type=args.net_type, dataset=args.dataset)
     elif args.model == "IWAE":
-        model = IWAE(act_func=act_func[args.act_func], num_samples=args.num_samples, hidden_dim=args.hidden_dim,
+        model = IWAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
+                     hidden_dim=args.hidden_dim,
                      name=args.model, net_type=args.net_type, dataset=args.dataset)
     elif args.model == 'AIWAE':
-        model = AIWAE(step_size=args.step_size, n_leapfrogs=args.n_leapfrogs, K=args.K,
+        model = AIWAE(shape=image_shape, step_size=args.step_size, n_leapfrogs=args.n_leapfrogs, K=args.K,
                       use_barker=args.use_barker,
                       act_func=act_func[args.act_func],
                       num_samples=args.num_samples, hidden_dim=args.hidden_dim,
                       name=args.model, net_type=args.net_type, dataset=args.dataset)
     elif args.model == 'AIS_VAE':
-        model = AIS_VAE(step_size=args.step_size, K=args.K, use_barker=args.use_barker, num_samples=args.num_samples,
+        model = AIS_VAE(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
+                        num_samples=args.num_samples,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model)
     else:
         raise ValueError
 
-    trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, max_epochs=150,
-                                            fast_dev_run=False)
+    trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, fast_dev_run=False)
     pl.Trainer()
     trainer.fit(model, train_dataloader=train_loader, val_dataloaders=val_loader)
-    trainer.save_checkpoint(f"./checkpoints/{args.model}_{args.hidden_dim}.ckpt")
