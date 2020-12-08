@@ -194,3 +194,59 @@ class MALA(nn.Module):
         with torch.enable_grad():
             grad = _get_grad(z=z, target=target, x=x)
             return grad
+
+
+class ULA(nn.Module):
+    def __init__(self, step_size, learnable):
+        '''
+        :param step_size: stepsize for leapfrog
+        :param learnable: whether learnable (usage for Met model) or not
+        '''
+        super().__init__()
+        self.learnable = learnable
+        self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
+        self.register_buffer('one', torch.tensor(1., dtype=torch.float32))
+        self.log_stepsize = nn.Parameter(torch.log(torch.tensor(step_size, dtype=torch.float32)),
+                                         requires_grad=learnable)
+
+    @property
+    def step_size(self):
+        return torch.exp(self.log_stepsize)
+
+    def _forward_step(self, z_old, x=None, target=None):
+        eps = torch.randn_like(z_old)
+        update = torch.sqrt(2 * self.step_size) * eps + self.step_size * self.get_grad(z=z_old,
+                                                                                       target=target,
+                                                                                       x=x)
+        return z_old + update, eps
+
+    def make_transition(self, z, target, x=None):
+        """
+        Input:
+        z_old - current position
+        target - target distribution
+        x - data object (optional)
+        Output:
+        z_new - new position
+        current_log_alphas - current log_alphas, corresponding to sampled decision variables
+        a - decision variables (0 or +1)
+        """
+        ############ Then we compute new points and densities ############
+        std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
+
+        z_upd, eps = self._forward_step(z_old=z, x=x, target=target)
+
+        eps_reverse = (z - z_upd - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / torch.sqrt(
+            2 * self.step_size)
+        proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
+        proposal_density_denominator = std_normal.log_prob(eps).sum(1)
+
+        z_new = z_upd
+
+        return z_new, proposal_density_numerator - proposal_density_denominator
+
+    def get_grad(self, z, target, x=None):
+        z = z.detach().requires_grad_(True)
+        with torch.enable_grad():
+            grad = _get_grad(z=z, target=target, x=x)
+            return grad
