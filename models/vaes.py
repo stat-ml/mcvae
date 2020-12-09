@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
+from models.aux import ULA_nn
 from models.decoders import get_decoder
 from models.encoders import get_encoder
 from models.samplers import HMC, MALA, ULA
@@ -54,7 +55,7 @@ class Base(pl.LightningModule):
     def forward(self, z):
         return self.decode(z)
 
-    def joint_density(self, ):
+    def joint_logdensity(self, ):
         def density(z, x):
             z = z.clone()
             x_reconst = self(z)
@@ -215,17 +216,19 @@ class BaseAIS(Base):
         decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-4)
         decoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(decoder_optimizer, lambda_lr)
 
-        encoder_optimizer = torch.optim.Adam(self.encoder_net.parameters(), lr=1e-3, eps=1e-4)
+        encoder_optimizer = torch.optim.Adam(list(self.encoder_net.parameters()) + list(self.transitions.parameters()),
+                                             lr=1e-3, eps=1e-4)
         encoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(encoder_optimizer, lambda_lr)
         return [decoder_optimizer, encoder_optimizer], [decoder_scheduler_lr, encoder_scheduler_lr]
 
     def run_transitions(self, z, x, mu, logvar):
         init_logdens = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
             z).sum(-1)
-        annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens(z=z) + beta * self.joint_density()(z=z,
-                                                                                                                    x=x)
+        annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens(z=z) + beta * self.joint_logdensity()(
+            z=z,
+            x=x)
         z_transformed = z
-        sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_density()(z=z, x=x) - init_logdens(z))
+        sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z))
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
 
         for i in range(1, self.K - 1):
@@ -235,7 +238,7 @@ class BaseAIS(Base):
                                                                                 annealing_logdens=annealing_logdens(
                                                                                     beta=self.beta[i]))
             sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
-                    self.joint_density()(z=z_transformed, x=x) - init_logdens(z=z_transformed))
+                    self.joint_logdensity()(z=z_transformed, x=x) - init_logdens(z=z_transformed))
             all_acceptance = torch.cat([all_acceptance, directions[None]])
 
         z_transformed, current_log_alphas, directions = self.one_transition(current_num=self.K - 2,
@@ -324,7 +327,8 @@ class AIWAE(BaseAIS):
             weight = torch.exp(log_weight)
             weight = weight / torch.sum(weight, 0)
             loss = -torch.mean(
-                torch.sum(weight * self.joint_density()(z=z_transformed, x=x).view((self.num_samples, batch_size)), 0))
+                torch.sum(weight * self.joint_logdensity()(z=z_transformed, x=x).view((self.num_samples, batch_size)),
+                          0))
         return loss
 
 
@@ -351,11 +355,11 @@ class AIS_VAE(BaseAIS):
                                                                      scale=torch.exp(0.5 * logvar.detach())).log_prob(
             z).sum(-1)
         annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens_detached(
-            z=z) + beta * self.joint_density()(z=z,
-                                               x=x)
+            z=z) + beta * self.joint_logdensity()(z=z,
+                                                  x=x)
 
         sum_log_weights = (self.beta[1] - self.beta[0]) * (
-                self.joint_density()(z=z, x=x) - init_logdens(z=z))
+                self.joint_logdensity()(z=z, x=x) - init_logdens(z=z))
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
         z_transformed = z
 
@@ -376,7 +380,7 @@ class AIS_VAE(BaseAIS):
                                                                                             beta=self.beta[i]))
                     sum_log_alpha = torch.empty_like(z_transformed[:, 0])
             sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
-                    self.joint_density()(z=z_transformed, x=x) - init_logdens(z=z))
+                    self.joint_logdensity()(z=z_transformed, x=x) - init_logdens(z=z))
             all_acceptance = torch.cat([all_acceptance, directions[None]])
 
         self.update_stepsize(all_acceptance.mean(1))
@@ -441,17 +445,23 @@ class AIS_VAE(BaseAIS):
 
 
 class ULA_VAE(BaseAIS):
-    def __init__(self, **kwargs):
+    def __init__(self, use_transforms=False, **kwargs):
         super().__init__(**kwargs)
+        if use_transforms:
+            transforms = lambda: ULA_nn(input=kwargs['hidden_dim'], output=kwargs['hidden_dim'],
+                                        hidden=(kwargs['hidden_dim'], kwargs['hidden_dim']),
+                                        h_dim=None)
+        else:
+            transforms = None
         self.transitions = nn.ModuleList(
-            [ULA(step_size=self.epsilons[0], learnable=False)
+            [ULA(step_size=self.epsilons[0], learnable=False, transforms=transforms)
              for _ in range(self.K)])
         self.save_hyperparameters()
 
     def one_transition(self, current_num, z, x, annealing_logdens):
-        z_new, current_log_weights = self.transitions[current_num].make_transition(z=z, x=x,
-                                                                                   target=annealing_logdens)
-        return z_new, current_log_weights
+        z_new, current_log_weights, directions = self.transitions[current_num].make_transition(z=z, x=x,
+                                                                                               target=annealing_logdens)
+        return z_new, current_log_weights, directions
 
     def run_transitions(self, z, x, mu, logvar, inference_part):
         init_logdens = lambda z: torch.distributions.Normal(loc=mu,
@@ -461,50 +471,49 @@ class ULA_VAE(BaseAIS):
                                                                      scale=torch.exp(0.5 * logvar.detach())).log_prob(
             z).sum(-1)
         annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens_detached(
-            z=z) + beta * self.joint_density()(z=z,
-                                               x=x)
+            z=z) + beta * self.joint_logdensity()(z=z,
+                                                  x=x)
 
         sum_log_weights = -init_logdens(z=z)
-        # all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
+        all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
         z_transformed = z
 
         for i in range(1, self.K + 1):
             if inference_part:
-                z_transformed, current_log_weights = self.one_transition(current_num=i - 1,
-                                                                         z=z_transformed,
-                                                                         x=x,
-                                                                         annealing_logdens=annealing_logdens(
-                                                                             beta=self.beta[i]))
+                z_transformed, current_log_weights, directions = self.one_transition(current_num=i - 1,
+                                                                                     z=z_transformed,
+                                                                                     x=x,
+                                                                                     annealing_logdens=annealing_logdens(
+                                                                                         beta=self.beta[i]))
             else:
                 with torch.no_grad():
-                    z_transformed, current_log_weights = self.one_transition(current_num=i - 1,
-                                                                             z=z_transformed,
-                                                                             x=x,
-                                                                             annealing_logdens=annealing_logdens(
-                                                                                 beta=self.beta[i]))
+                    z_transformed, current_log_weights, directions = self.one_transition(current_num=i - 1,
+                                                                                         z=z_transformed,
+                                                                                         x=x,
+                                                                                         annealing_logdens=annealing_logdens(
+                                                                                             beta=self.beta[i]))
 
             sum_log_weights += current_log_weights
-            # all_acceptance = torch.cat([all_acceptance, directions[None]])
+            all_acceptance = torch.cat([all_acceptance, directions[None]])
 
-        # self.update_stepsize(all_acceptance.mean(1))
+        self.update_stepsize(all_acceptance.mean(1))
 
-        sum_log_weights += self.joint_density()(z=z_transformed, x=x)
+        sum_log_weights += self.joint_logdensity()(z=z_transformed, x=x)
 
-        return z_transformed, sum_log_weights
+        return z_transformed, sum_log_weights, all_acceptance
 
     def step(self, batch):
         x, _ = batch
         z, mu, logvar = self.enc_rep(x)
         x = x.repeat(self.num_samples, 1, 1, 1)
-        z_transformed, sum_log_weights = self.run_transitions(z=z,
-                                                              x=x,
-                                                              mu=mu,
-                                                              logvar=logvar,
-                                                              inference_part=False)
+        z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z,
+                                                                              x=x,
+                                                                              mu=mu,
+                                                                              logvar=logvar,
+                                                                              inference_part=False)
 
         loss_enc = self.loss_function(sum_log_weights=sum_log_weights)
         loss_dec = self.loss_function(sum_log_weights=sum_log_weights)
-        all_acceptance = torch.ones_like(sum_log_weights[None])
         return loss_enc, loss_dec, all_acceptance
 
     def loss_function(self, sum_log_weights):
@@ -524,11 +533,11 @@ class ULA_VAE(BaseAIS):
 
         x = x.repeat(self.num_samples, 1, 1, 1)
 
-        z_transformed, sum_log_weights = self.run_transitions(z=z,
-                                                              x=x,
-                                                              mu=mu,
-                                                              logvar=logvar,
-                                                              inference_part=inference_part)
+        z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z,
+                                                                              x=x,
+                                                                              mu=mu,
+                                                                              logvar=logvar,
+                                                                              inference_part=inference_part)
 
         loss = self.loss_function(sum_log_weights)
         return {"loss": loss}

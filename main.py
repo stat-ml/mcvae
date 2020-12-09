@@ -25,6 +25,7 @@ if __name__ == '__main__':
     parser.add_argument("--step_size", type=float, default=0.01)
     parser.add_argument("--use_barker", type=str2bool, default=True)
     parser.add_argument("--binarize", type=str2bool, default=False)
+    parser.add_argument("--use_transforms", type=str2bool, default=False)
 
     act_func = get_activations()
 
@@ -62,7 +63,7 @@ if __name__ == '__main__':
         model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
                         num_samples=args.num_samples,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
-                        hidden_dim=args.hidden_dim, name=args.model)
+                        hidden_dim=args.hidden_dim, name=args.model, use_transforms=args.use_transforms)
     else:
         raise ValueError
 

@@ -197,7 +197,7 @@ class MALA(nn.Module):
 
 
 class ULA(nn.Module):
-    def __init__(self, step_size, learnable):
+    def __init__(self, step_size, learnable=False, transforms=None):
         '''
         :param step_size: stepsize for leapfrog
         :param learnable: whether learnable (usage for Met model) or not
@@ -208,6 +208,13 @@ class ULA(nn.Module):
         self.register_buffer('one', torch.tensor(1., dtype=torch.float32))
         self.log_stepsize = nn.Parameter(torch.log(torch.tensor(step_size, dtype=torch.float32)),
                                          requires_grad=learnable)
+        self.transforms = False
+        self.add_nn = None
+        self.scale_nn = None
+        if transforms is not None:
+            self.transforms = True
+            self.add_nn = transforms()
+            self.scale_nn = transforms()
 
     @property
     def step_size(self):
@@ -215,10 +222,24 @@ class ULA(nn.Module):
 
     def _forward_step(self, z_old, x=None, target=None):
         eps = torch.randn_like(z_old)
-        update = torch.sqrt(2 * self.step_size) * eps + self.step_size * self.get_grad(z=z_old,
-                                                                                       target=target,
-                                                                                       x=x)
-        return z_old + update, eps
+        self.log_jac = torch.zeros_like(z_old[:, 0])
+        if not self.transforms:
+            update = torch.sqrt(2 * self.step_size) * eps + self.step_size * self.get_grad(z=z_old,
+                                                                                           target=target,
+                                                                                           x=x)
+            z_new = z_old + update
+            eps_reverse = (z_old - z_new - self.step_size * self.get_grad(z=z_new, target=target, x=x)) / torch.sqrt(
+                2 * self.step_size)
+        else:
+            z_new = self.add_nn(z_old) * self.scale_transform(z_old, sign="+") * eps
+            eps_reverse = (z_old - self.add_nn(z_new)) / self.scale_transform(z_new, sign="-")
+        return z_new, eps, eps_reverse
+
+    def scale_transform(self, z, sign='+'):
+        S = torch.sigmoid(self.scale_nn(z))
+        sign = {"+": 1., "-": -1.}[sign]
+        self.log_jac += torch.sum(torch.log(S), dim=1) * sign
+        return S
 
     def make_transition(self, z, target, x=None):
         """
@@ -231,19 +252,29 @@ class ULA(nn.Module):
         current_log_alphas - current log_alphas, corresponding to sampled decision variables
         a - decision variables (0 or +1)
         """
+
         ############ Then we compute new points and densities ############
         std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
 
-        z_upd, eps = self._forward_step(z_old=z, x=x, target=target)
+        z_upd, eps, eps_reverse = self._forward_step(z_old=z, x=x, target=target)
 
-        eps_reverse = (z - z_upd - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / torch.sqrt(
-            2 * self.step_size)
         proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
 
         z_new = z_upd
 
-        return z_new, proposal_density_numerator - proposal_density_denominator
+        ###
+        with torch.no_grad():
+            target_log_density_upd = target(z=z_upd, x=x)
+            target_log_density_old = target(z=z, x=x)
+            log_t = target_log_density_upd + proposal_density_numerator - target_log_density_old - proposal_density_denominator + self.log_jac
+            log_1_t = torch.logsumexp(torch.cat([torch.zeros_like(log_t).view(-1, 1),
+                                                 log_t.view(-1, 1)], dim=-1), dim=-1)  # log(1+t)
+
+            a, _ = acceptance_ratio(log_t, log_1_t, use_barker=False)
+        ###
+
+        return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a
 
     def get_grad(self, z, target, x=None):
         z = z.detach().requires_grad_(True)
