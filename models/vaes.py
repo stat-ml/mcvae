@@ -112,6 +112,28 @@ class Base(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
         return {"val_loss": output[0]}
+    
+    def evaluate_nll(self, batch, beta):
+        x, _ = batch
+        with torch.no_grad():
+            z, mu, logvar = self.enc_rep(x)
+            init_logdens = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
+            z).sum(-1)
+            annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens(z=z) + beta * self.joint_logdensity()(
+            z=z,
+            x=x)
+            sum_log_weights = (beta[1] - beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z))
+
+            for i in range(1, len(betas)- 1):
+                z, current_log_alphas, _ = self.one_transition(current_num=i - 1,z=z, x=x,  annealing_logdens=annealing_logdens(beta=beta[i]))
+                
+                sum_log_weights += (beta[i + 1] - beta[i]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z=z))
+        
+            batch_nll_estimator = torch.logsumexp(sum_log_weights, dim = -1) ###Should be a vector of batchsize containing nll estimator for each term of the batch
+            
+            return torch.mean(batch_nll_estimator,dim = -1)
+
+
 
 
 class VAE(Base):
