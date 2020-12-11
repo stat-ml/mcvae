@@ -202,7 +202,7 @@ class BaseAIS(Base):
         self.save_hyperparameters()
         self.K = K
         self.epsilons = [step_size for _ in range(self.K)]
-        self.epsilon_target = 0.6
+        self.epsilon_target = 0.95
         self.epsilon_decrease_alpha = 0.998
         self.epsilon_increase_alpha = 1.002
         self.epsilon_min = 0.001

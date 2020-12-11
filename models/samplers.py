@@ -231,7 +231,7 @@ class ULA(nn.Module):
             eps_reverse = (z_old - z_new - self.step_size * self.get_grad(z=z_new, target=target, x=x)) / torch.sqrt(
                 2 * self.step_size)
         else:
-            z_new = self.add_nn(z_old) * self.scale_transform(z_old, sign="+") * eps
+            z_new = self.add_nn(z_old) + self.scale_transform(z_old, sign="+") * eps
             eps_reverse = (z_old - self.add_nn(z_new)) / self.scale_transform(z_new, sign="-")
         return z_new, eps, eps_reverse
 
@@ -278,6 +278,7 @@ class ULA(nn.Module):
 
     def get_grad(self, z, target, x=None):
         z = z.detach().requires_grad_(True)
+        # z.requires_grad_(True)
         with torch.enable_grad():
             grad = _get_grad(z=z, target=target, x=x)
             return grad
