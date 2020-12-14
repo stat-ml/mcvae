@@ -122,9 +122,9 @@ class HMC(nn.Module):
         return z_, p_
 
     def get_grad(self, z, target, x=None):
-        z = z.detach().requires_grad_(True)
+        z_ = z.detach().requires_grad_(True)
         with torch.enable_grad():
-            grad = _get_grad(z=z, target=target, x=x)
+            grad = _get_grad(z=z_, target=target, x=x)
             return grad
 
 
@@ -190,9 +190,9 @@ class MALA(nn.Module):
         return z_new, a.to(torch.float32), current_log_alphas
 
     def get_grad(self, z, target, x=None):
-        z = z.detach().requires_grad_(True)
+        z_ = z.detach().requires_grad_(True)
         with torch.enable_grad():
-            grad = _get_grad(z=z, target=target, x=x)
+            grad = _get_grad(z=z_, target=target, x=x)
             return grad
 
 
@@ -277,7 +277,7 @@ class ULA(nn.Module):
         return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a
 
     def get_grad(self, z, target, x=None):
-        z = z.detach().requires_grad_(True)
+        z_ = z.detach().requires_grad_(True)
         with torch.enable_grad():
-            grad = _get_grad(z=z, target=target, x=x)
+            grad = _get_grad(z=z_, target=target, x=x)
             return grad

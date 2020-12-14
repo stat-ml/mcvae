@@ -159,8 +159,7 @@ class Base(pl.LightningModule):
                                         annealing_logdens=annealing_logdens(beta=beta[i]), nll=True)[0]
 
                 sum_log_weights += (beta[i + 1] - beta[i]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z=z))
-
-            sum_log_weights = sum_log_weights.view(x.shape[0], self.num_samples)
+            sum_log_weights = sum_log_weights.view(batch[0].shape[0], n_samples)
             batch_nll_estimator = torch.logsumexp(sum_log_weights,
                                                   dim=-1)  ###Should be a vector of batchsize containing nll estimator for each term of the batch
 
