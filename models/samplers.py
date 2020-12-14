@@ -278,7 +278,6 @@ class ULA(nn.Module):
 
     def get_grad(self, z, target, x=None):
         z = z.detach().requires_grad_(True)
-        # z.requires_grad_(True)
         with torch.enable_grad():
             grad = _get_grad(z=z, target=target, x=x)
             return grad

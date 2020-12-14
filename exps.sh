@@ -1,5 +1,5 @@
 ## VAE
-#python main.py --model VAE --dataset mnist --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 30 --track_grad_norm 2
+#python main.py --model VAE --dataset mnist --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 30
 #python main.py --model VAE --dataset omniglot --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 25 --net_type conv --num_samples 1 --max_epochs 30
 #python main.py --model VAE --dataset celeba --act_func leakyrelu --binarize False --use_barker False --hidden_dim 64 --batch_size 50 --net_type conv --num_samples 1 --max_epochs 30 --limit_train_batches 0.1 --limit_val_batches 0.1
 #

@@ -28,6 +28,11 @@ class Base(pl.LightningModule):
         self.random_z = torch.randn((64, hidden_dim), dtype=torch.float32)
         # Name, which is used for logging
         self.name = name
+        self.transitions_nll = nn.ModuleList(
+            [HMC(n_leapfrogs=3, step_size=0.05, use_barker=False)
+             for _ in range(5 - 1)])
+        for p in self.transitions_nll.parameters():
+            p.requires_grad_(False)
 
     def encode(self, x):
         # We treat the first half of output as mu, and the rest as logvar
@@ -41,11 +46,13 @@ class Base(pl.LightningModule):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def enc_rep(self, x, expand=True):
+    def enc_rep(self, x, expand=True, n_samples=None):
+        if n_samples is None:
+            n_samples = self.num_samples
         mu, logvar = self.encode(x)
         if expand:
-            mu = mu.repeat(self.num_samples, 1)
-            logvar = logvar.repeat(self.num_samples, 1)
+            mu = mu.repeat(n_samples, 1)
+            logvar = logvar.repeat(n_samples, 1)
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
@@ -54,6 +61,11 @@ class Base(pl.LightningModule):
 
     def forward(self, z):
         return self.decode(z)
+
+    def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
+        z_new = self.transitions_nll[current_num].make_transition(z=z, x=x,
+                                                                  target=annealing_logdens)
+        return z_new
 
     def joint_logdensity(self, ):
         def density(z, x):
@@ -88,19 +100,24 @@ class Base(pl.LightningModule):
                                                   acceptance[i].item(),
                                                   self.current_epoch)
 
-        if self.dataset.lower().find('cifar') > -1:
-            x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 32, 32))
-        elif self.dataset.lower().find('mnist') > -1:
-            x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 1, 28, 28))
-        elif self.dataset.lower().find('omniglot') > -1:
-            x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 1, 105, 105))
-        elif self.dataset.lower().find('celeba') > -1:
-            x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 64, 64))
-        else:
-            raise ValueError
-        grid = torchvision.utils.make_grid(x_hat)
+        if "nll" in outputs[0].keys():
+            nll = torch.stack([x['nll'] for x in outputs]).mean(0)
+            self.logger.experiment.add_scalar(f'{self.dataset}/{self.name}/nll', nll,
+                                              self.current_epoch)
 
-        self.logger.experiment.add_image(f'{self.dataset}/{self.name}/image', grid, self.current_epoch)
+        if self.dataset.lower() in ['cifar', 'mnist', 'omniglot', 'celeba']:
+            if self.dataset.lower().find('cifar') > -1:
+                x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 32, 32))
+            elif self.dataset.lower().find('mnist') > -1:
+                x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 1, 28, 28))
+            elif self.dataset.lower().find('omniglot') > -1:
+                x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 1, 105, 105))
+            elif self.dataset.lower().find('celeba') > -1:
+                x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 64, 64))
+            grid = torchvision.utils.make_grid(x_hat)
+            self.logger.experiment.add_image(f'{self.dataset}/{self.name}/image', grid, self.current_epoch)
+        else:
+            pass
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=1e-3)
@@ -111,29 +128,43 @@ class Base(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
-        return {"val_loss": output[0]}
-    
+        d = {"val_loss": output[0]}
+        if (self.current_epoch % 10 == 0):
+            nll = self.evaluate_nll(batch=batch,
+                                    beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
+            d.update({"nll": nll})
+        return d
+
     def evaluate_nll(self, batch, beta):
         x, _ = batch
         with torch.no_grad():
-            z, mu, logvar = self.enc_rep(x)
+            n_samples = 7
+            z, mu, logvar = self.enc_rep(x, n_samples=n_samples)
+            if len(x.shape) == 4:
+                x = x.repeat(n_samples, 1, 1, 1)
+            else:
+                x = x.repeat(n_samples, 1)
             init_logdens = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
-            z).sum(-1)
-            annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens(z=z) + beta * self.joint_logdensity()(
-            z=z,
-            x=x)
+                z).sum(-1)
+            annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens(
+                z=z) + beta * self.joint_logdensity()(
+                z=z,
+                x=x)
+            # import pdb
+            # pdb.set_trace()
             sum_log_weights = (beta[1] - beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z))
 
-            for i in range(1, len(betas)- 1):
-                z, current_log_alphas, _ = self.one_transition(current_num=i - 1,z=z, x=x,  annealing_logdens=annealing_logdens(beta=beta[i]))
-                
+            for i in range(1, len(beta) - 1):
+                z = self.one_transition(current_num=i - 1, z=z, x=x,
+                                        annealing_logdens=annealing_logdens(beta=beta[i]), nll=True)[0]
+
                 sum_log_weights += (beta[i + 1] - beta[i]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z=z))
-        
-            batch_nll_estimator = torch.logsumexp(sum_log_weights, dim = -1) ###Should be a vector of batchsize containing nll estimator for each term of the batch
-            
-            return torch.mean(batch_nll_estimator,dim = -1)
 
+            sum_log_weights = sum_log_weights.view(x.shape[0], self.num_samples)
+            batch_nll_estimator = torch.logsumexp(sum_log_weights,
+                                                  dim=-1)  ###Should be a vector of batchsize containing nll estimator for each term of the batch
 
+            return torch.mean(batch_nll_estimator, dim=-1)
 
 
 class VAE(Base):
@@ -148,12 +179,14 @@ class VAE(Base):
         return loss
 
     def step(self, batch):
-        # import pdb
-        # pdb.set_trace()
         x, _ = batch
         z, mu, logvar = self.enc_rep(x)
         x_hat = self(z)
-        loss = self.loss_function(x_hat, x.repeat(self.num_samples, 1, 1, 1), mu, logvar)
+        if len(x.shape) == 4:
+            x = x.repeat(self.num_samples, 1, 1, 1)
+        else:
+            x = x.repeat(self.num_samples, 1)
+        loss = self.loss_function(x_hat, x, mu, logvar)
         return loss, x_hat, z
 
 
@@ -181,7 +214,11 @@ class IWAE(Base):
         x, _ = batch
         z, mu, logvar = self.enc_rep(x)
         x_hat = self(z)
-        loss = self.loss_function(x_hat, x.repeat(self.num_samples, 1, 1, 1), mu, logvar, z)
+        if len(x.shape) == 4:
+            x = x.repeat(self.num_samples, 1, 1, 1)
+        else:
+            x = x.repeat(self.num_samples, 1)
+        loss = self.loss_function(x_hat, x, mu, logvar, z)
         return loss, x_hat, z
 
 
@@ -189,15 +226,15 @@ class BaseMet(Base):
     def step(self, batch):
         x, _ = batch
         z, mu, logvar = self.enc_rep(x)
+        if len(x.shape) == 4:
+            x = x.repeat(self.num_samples, 1, 1, 1)
+        else:
+            x = x.repeat(self.num_samples, 1)
         z_transformed, p_transformed, sum_log_jacobian, sum_log_alpha, all_acceptance, p_old = self.run_transitions(z=z,
-                                                                                                                    x=x.repeat(
-                                                                                                                        self.num_samples,
-                                                                                                                        1,
-                                                                                                                        1,
-                                                                                                                        1))
+                                                                                                                    x=x)
         x_hat = self(z_transformed)
 
-        loss = self.loss_function(recon_x=x_hat, x=x.repeat(self.num_samples, 1, 1, 1), mu=mu, logvar=logvar, z=z,
+        loss = self.loss_function(recon_x=x_hat, x=x, mu=mu, logvar=logvar, z=z,
                                   z_transformed=z_transformed,
                                   sum_log_alpha=sum_log_alpha, sum_log_jacobian=sum_log_jacobian, p=p_old,
                                   p_transformed=p_transformed)
@@ -206,7 +243,11 @@ class BaseMet(Base):
 
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
-        return {"val_loss": output[0], "Acceptance": output[-1]}
+        d = {"val_loss": output[0], "Acceptance": output[-1]}
+        if (self.current_epoch % 10 == 0):
+            nll = self.evaluate_nll(batch=batch, beta=self.beta)
+            d.update({"nll": nll})
+        return d
 
     def validation_epoch_end(self, outputs):
         # Some stuff, which is needed for logging and tensorboard
@@ -291,7 +332,10 @@ class BaseAIS(Base):
     def step(self, batch):
         x, _ = batch
         z, mu, logvar = self.enc_rep(x)
-        x = x.repeat(self.num_samples, 1, 1, 1)
+        if len(x.shape) == 4:
+            x = x.repeat(self.num_samples, 1, 1, 1)
+        else:
+            x = x.repeat(self.num_samples, 1)
 
         z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z, x=x,
                                                                               mu=mu,
@@ -303,7 +347,12 @@ class BaseAIS(Base):
 
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
-        return {"val_loss_enc": output[0], "val_loss_dec": output[1], "acceptance_rate": output[2].mean(1)}
+        d = {"val_loss_enc": output[0], "val_loss_dec": output[1], "acceptance_rate": output[2].mean(1)}
+        if (self.current_epoch % 10 == 0):
+            nll = self.evaluate_nll(batch=batch,
+                                    beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
+            d.update({"nll": nll})
+        return d
 
 
 class AIWAE(BaseAIS):
@@ -324,7 +373,10 @@ class AIWAE(BaseAIS):
         if optimizer_idx == 0:  # decoder
             with torch.no_grad():
                 z, mu, logvar = self.enc_rep(x)
-                x = x.repeat(self.num_samples, 1, 1, 1)
+                if len(x.shape) == 4:
+                    x = x.repeat(self.num_samples, 1, 1, 1)
+                else:
+                    x = x.repeat(self.num_samples, 1)
                 z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z, x=x,
                                                                                       mu=mu,
                                                                                       logvar=logvar)
@@ -363,10 +415,15 @@ class AIS_VAE(BaseAIS):
         self.save_hyperparameters()
         self.moving_averages = []
 
-    def one_transition(self, current_num, z, x, annealing_logdens):
-        z_new, directions, current_log_alphas = self.transitions[current_num].make_transition(z=z, x=x,
-                                                                                              target=annealing_logdens)
-        return z_new, current_log_alphas, directions
+    def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
+        if nll:
+            z_new = self.transitions_nll[current_num].make_transition(z=z, x=x,
+                                                                      target=annealing_logdens)
+            return z_new
+        else:
+            z_new, directions, current_log_alphas = self.transitions[current_num].make_transition(z=z, x=x,
+                                                                                                  target=annealing_logdens)
+            return z_new, current_log_alphas, directions
 
     def run_transitions(self, z, x, mu, logvar, inference_part):
         sum_log_alpha = torch.zeros_like(z[:, 0])
@@ -412,7 +469,10 @@ class AIS_VAE(BaseAIS):
     def step(self, batch):
         x, _ = batch
         z, mu, logvar = self.enc_rep(x)
-        x = x.repeat(self.num_samples, 1, 1, 1)
+        if len(x.shape) == 4:
+            x = x.repeat(self.num_samples, 1, 1, 1)
+        else:
+            x = x.repeat(self.num_samples, 1)
         z_transformed, sum_log_alpha, sum_log_weights, all_acceptance = self.run_transitions(z=z,
                                                                                              x=x,
                                                                                              mu=mu,
@@ -452,7 +512,10 @@ class AIS_VAE(BaseAIS):
         else:  # encoder
             z, mu, logvar = self.enc_rep(x)
 
-        x = x.repeat(self.num_samples, 1, 1, 1)
+        if len(x.shape) == 4:
+            x = x.repeat(self.num_samples, 1, 1, 1)
+        else:
+            x = x.repeat(self.num_samples, 1)
 
         z_transformed, sum_log_alpha, sum_log_weights, all_acceptance = self.run_transitions(z=z,
                                                                                              x=x,
@@ -480,10 +543,15 @@ class ULA_VAE(BaseAIS):
              for _ in range(self.K)])
         self.save_hyperparameters()
 
-    def one_transition(self, current_num, z, x, annealing_logdens):
-        z_new, current_log_weights, directions = self.transitions[current_num].make_transition(z=z, x=x,
-                                                                                               target=annealing_logdens)
-        return z_new, current_log_weights, directions
+    def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
+        if nll:
+            z_new = self.transitions_nll[current_num].make_transition(z=z, x=x,
+                                                                      target=annealing_logdens)
+            return z_new
+        else:
+            z_new, current_log_weights, directions = self.transitions[current_num].make_transition(z=z, x=x,
+                                                                                                   target=annealing_logdens)
+            return z_new, current_log_weights, directions
 
     def run_transitions(self, z, x, mu, logvar, inference_part):
         init_logdens = lambda z: torch.distributions.Normal(loc=mu,
@@ -527,7 +595,10 @@ class ULA_VAE(BaseAIS):
     def step(self, batch):
         x, _ = batch
         z, mu, logvar = self.enc_rep(x)
-        x = x.repeat(self.num_samples, 1, 1, 1)
+        if len(x.shape) == 4:
+            x = x.repeat(self.num_samples, 1, 1, 1)
+        else:
+            x = x.repeat(self.num_samples, 1)
         z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z,
                                                                               x=x,
                                                                               mu=mu,
@@ -553,7 +624,10 @@ class ULA_VAE(BaseAIS):
         else:  # encoder
             z, mu, logvar = self.enc_rep(x)
 
-        x = x.repeat(self.num_samples, 1, 1, 1)
+        if len(x.shape) == 4:
+            x = x.repeat(self.num_samples, 1, 1, 1)
+        else:
+            x = x.repeat(self.num_samples, 1)
 
         z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z,
                                                                               x=x,
