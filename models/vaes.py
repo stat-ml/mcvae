@@ -340,7 +340,7 @@ class BaseAIS(Base):
         x_hat = self(z_transformed)
         loss_enc = self.loss_function(z, x_hat, x, mu, logvar, sum_log_weights, inference_part=False)
         loss_dec = self.loss_function(z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part=True)
-        return loss_enc, loss_dec, all_acceptance
+        return loss_enc, loss_dec, all_acceptance, z_transformed
 
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
@@ -479,7 +479,7 @@ class AIS_VAE(BaseAIS):
         loss_enc = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights, inference_part=True)
         loss_dec = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
                                       inference_part=False)
-        return loss_enc, loss_dec, all_acceptance
+        return loss_enc, loss_dec, all_acceptance, z_transformed
 
     def loss_function(self, sum_log_alpha=None, sum_log_weights=None, inference_part=None):
         batch_size = sum_log_weights.shape[0] // self.num_samples
@@ -604,7 +604,7 @@ class ULA_VAE(BaseAIS):
 
         loss_enc = self.loss_function(sum_log_weights=sum_log_weights)
         loss_dec = self.loss_function(sum_log_weights=sum_log_weights)
-        return loss_enc, loss_dec, all_acceptance
+        return loss_enc, loss_dec, all_acceptance, z_transformed
 
     def loss_function(self, sum_log_weights):
         batch_size = sum_log_weights.shape[0] // self.num_samples
