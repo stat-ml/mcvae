@@ -32,7 +32,7 @@ def _get_grad(z, target, x=None):
 def run_chain(kernel, z_init, target, x=None, n_steps=100, return_trace=False, burnin=0):
     samples = z_init
     if not return_trace:
-        for _ in range(n_steps):
+        for _ in range(burnin + n_steps):
             samples = kernel.make_transition(z=samples, target=target, x=x)[0]
         return samples
     else:
@@ -122,7 +122,7 @@ class HMC(nn.Module):
         return z_, p_
 
     def get_grad(self, z, target, x=None):
-        z_ = z.detach().requires_grad_(True)
+        z_ = z.detach().clone().requires_grad_(True)
         with torch.enable_grad():
             grad = _get_grad(z=z_, target=target, x=x)
             return grad
@@ -190,7 +190,7 @@ class MALA(nn.Module):
         return z_new, a.to(torch.float32), current_log_alphas
 
     def get_grad(self, z, target, x=None):
-        z_ = z.detach().requires_grad_(True)
+        z_ = z.detach().clone().requires_grad_(True)
         with torch.enable_grad():
             grad = _get_grad(z=z_, target=target, x=x)
             return grad
@@ -277,7 +277,7 @@ class ULA(nn.Module):
         return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a
 
     def get_grad(self, z, target, x=None):
-        z_ = z.detach().requires_grad_(True)
+        z_ = z.detach().clone().requires_grad_(True)
         with torch.enable_grad():
             grad = _get_grad(z=z_, target=target, x=x)
             return grad

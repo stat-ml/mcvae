@@ -150,8 +150,6 @@ class Base(pl.LightningModule):
                 z=z) + beta * self.joint_logdensity()(
                 z=z,
                 x=x)
-            # import pdb
-            # pdb.set_trace()
             sum_log_weights = (beta[1] - beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z))
 
             for i in range(1, len(beta) - 1):
