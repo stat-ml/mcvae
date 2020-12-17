@@ -539,6 +539,7 @@ class ULA_VAE(BaseAIS):
             [ULA(step_size=self.epsilons[0], learnable=False, transforms=transforms)
              for _ in range(self.K)])
         self.save_hyperparameters()
+        self.score_matching = use_transform
 
     def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
         if nll:
@@ -546,9 +547,9 @@ class ULA_VAE(BaseAIS):
                                                                       target=annealing_logdens)
             return z_new
         else:
-            z_new, current_log_weights, directions = self.transitions[current_num].make_transition(z=z, x=x,
+            z_new, current_log_weights, directions, socre_match_cur = self.transitions[current_num].make_transition(z=z, x=x,
                                                                                                    target=annealing_logdens)
-            return z_new, current_log_weights, directions
+            return z_new, current_log_weights, directions, score_match_cur
 
     def run_transitions(self, z, x, mu, logvar, inference_part):
         init_logdens = lambda z: torch.distributions.Normal(loc=mu,
@@ -564,30 +565,31 @@ class ULA_VAE(BaseAIS):
         sum_log_weights = -init_logdens(z=z)
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
         z_transformed = z
+        loss_sm = torch.zeros_like(z)
 
-        for i in range(1, self.K + 1):
+        for i in range(1, self.K + 1): 
             if inference_part:
-                z_transformed, current_log_weights, directions = self.one_transition(current_num=i - 1,
+                z_transformed, current_log_weights, directions, score_match_cur = self.one_transition(current_num=i - 1,
                                                                                      z=z_transformed,
                                                                                      x=x,
                                                                                      annealing_logdens=annealing_logdens(
                                                                                          beta=self.beta[i]))
             else:
                 with torch.no_grad():
-                    z_transformed, current_log_weights, directions = self.one_transition(current_num=i - 1,
+                    z_transformed, current_log_weights, directions, score_match_cur = self.one_transition(current_num=i - 1,
                                                                                          z=z_transformed,
                                                                                          x=x,
                                                                                          annealing_logdens=annealing_logdens(
                                                                                              beta=self.beta[i]))
-
+            loss_sm += score_match_cur
             sum_log_weights += current_log_weights
-            all_acceptance = torch.cat([all_acceptance, directions[None]])
+            all_acceptance = torch.cat([all_acceptance, 1.*directions[None]])
 
         self.update_stepsize(all_acceptance.mean(1))
 
         sum_log_weights += self.joint_logdensity()(z=z_transformed, x=x)
 
-        return z_transformed, sum_log_weights, all_acceptance
+        return z_transformed, sum_log_weights, all_acceptance, loss_sm
 
     def step(self, batch):
         x, _ = batch
@@ -596,7 +598,7 @@ class ULA_VAE(BaseAIS):
             x = x.repeat(self.num_samples, 1, 1, 1)
         else:
             x = x.repeat(self.num_samples, 1)
-        z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z,
+        z_transformed, sum_log_weights, all_acceptance, loss_sm = self.run_transitions(z=z,
                                                                               x=x,
                                                                               mu=mu,
                                                                               logvar=logvar,
@@ -604,7 +606,8 @@ class ULA_VAE(BaseAIS):
 
         loss_enc = self.loss_function(sum_log_weights=sum_log_weights)
         loss_dec = self.loss_function(sum_log_weights=sum_log_weights)
-        return loss_enc, loss_dec, all_acceptance, z_transformed
+        loss_sm = loss_sm.sum(1).mean()
+        return loss_enc, loss_dec, loss_sm, all_acceptance, z_transformed
 
     def loss_function(self, sum_log_weights):
         batch_size = sum_log_weights.shape[0] // self.num_samples
@@ -626,11 +629,12 @@ class ULA_VAE(BaseAIS):
         else:
             x = x.repeat(self.num_samples, 1)
 
-        z_transformed, sum_log_weights, all_acceptance = self.run_transitions(z=z,
+        z_transformed, sum_log_weights, all_acceptance, loss_sm = self.run_transitions(z=z,
                                                                               x=x,
                                                                               mu=mu,
                                                                               logvar=logvar,
                                                                               inference_part=inference_part)
-
+        
+        
         loss = self.loss_function(sum_log_weights)
         return {"loss": loss}
