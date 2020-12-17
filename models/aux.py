@@ -78,3 +78,24 @@ class ULA_nn(nn.Module):
         for layer in self.hidden_part:
             h = layer(h)
         return self.llast(h)
+
+    
+    
+class ULA_nn_sm(nn.Module):
+    def __init__(self, input=2, output=2, hidden=(50,), h_dim=None):
+        super().__init__()
+        if h_dim is None:
+            h_dim = 0
+        self.l1 = nn.Linear(in_features=input + h_dim, out_features=hidden[0])
+        self.act_func = nn.LeakyReLU()
+        self.hidden_part = nn.ModuleList([])
+        for i in range(1, len(hidden)):
+            self.hidden_part.append(nn.Linear(in_features=hidden[i - 1], out_features=hidden[i]))
+            self.hidden_part.append(self.act_func)
+        self.llast = nn.Linear(in_features=hidden[-1], out_features=output)
+
+    def forward(self, z, x):
+        h = self.act_func(self.l1(torch.cat([z,x], dim = 0)))
+        for layer in self.hidden_part:
+            h = layer(h) ###potentially good to write here layer(torch.cat([z,h], dim = 0)) ??
+        return self.llast(h)

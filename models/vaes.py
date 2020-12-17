@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
-from models.aux import ULA_nn
+from models.aux import ULA_nn, ULA_nn_sm
 from models.decoders import get_decoder
 from models.encoders import get_encoder
 from models.samplers import HMC, MALA, ULA
@@ -530,7 +530,8 @@ class ULA_VAE(BaseAIS):
     def __init__(self, use_transforms=False, **kwargs):
         super().__init__(**kwargs)
         if use_transforms:
-            transforms = lambda: ULA_nn(input=kwargs['hidden_dim'], output=kwargs['hidden_dim'],
+            #if kwargs['score_matching']: to write it better
+            transforms = lambda: ULA_nn_sm(input=kwargs['hidden_dim_sm'], output=kwargs['hidden_dim'],
                                         hidden=(kwargs['hidden_dim'], kwargs['hidden_dim']),
                                         h_dim=None)
         else:
@@ -540,6 +541,21 @@ class ULA_VAE(BaseAIS):
              for _ in range(self.K)])
         self.save_hyperparameters()
         self.score_matching = use_transform
+        
+        
+    def configure_optimizers(self):
+        lambda_lr = lambda epoch: 10 ** (-epoch / 7.0)
+        decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-4)
+        decoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(decoder_optimizer, lambda_lr)
+
+        encoder_optimizer = torch.optim.Adam(list(self.encoder_net.parameters()),
+                                             lr=1e-3, eps=1e-4)
+        encoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(encoder_optimizer, lambda_lr)
+        
+        score_matching_optimizzr = torch.optim.Adam(self.transitions.parameters(), lr=1e-3, eps=1e-4)
+        score_matching_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(score_matching_optimizzr, lambda_lr)
+
+        return [decoder_optimizer, encoder_optimizer], [decoder_scheduler_lr, encoder_scheduler_lr]
 
     def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
         if nll:

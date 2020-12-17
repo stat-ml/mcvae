@@ -215,7 +215,7 @@ class ULA(nn.Module):
         if transforms is not None:
             self.transforms = True
             self.add_nn = transforms()
-            self.scale_nn = transforms() just test with step size at the moment
+            self.scale_nn = transforms() ###just test with step size at the moment
             #self.scale_nn = lambda z, sign: 1. 
             self.score_matching = True
 
