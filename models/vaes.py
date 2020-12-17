@@ -14,7 +14,7 @@ from models.samplers import HMC, MALA, ULA
 class Base(pl.LightningModule):
     def __init__(self, num_samples, act_func, shape, hidden_dim=64, name="VAE", net_type="fc",
                  dataset='mnist'):
-        super(Base, self).__init__()
+        super().__init__()
         self.save_hyperparameters()
         self.dataset = dataset
         self.hidden_dim = hidden_dim
@@ -527,11 +527,11 @@ class AIS_VAE(BaseAIS):
 
 
 class ULA_VAE(BaseAIS):
-    def __init__(self, use_transforms=False, **kwargs):
+    def __init__(self, use_transforms=False, obs_dim =784, **kwargs):
         super().__init__(**kwargs)
         if use_transforms:
             #if kwargs['score_matching']: to write it better
-            transforms = lambda: ULA_nn_sm(input=kwargs['hidden_dim_sm'], output=kwargs['hidden_dim'],
+            transforms = lambda: ULA_nn_sm(input=kwargs['hidden_dim']+obs_dim, output=kwargs['hidden_dim'],
                                         hidden=(kwargs['hidden_dim'], kwargs['hidden_dim']),
                                         h_dim=None)
         else:
@@ -540,7 +540,7 @@ class ULA_VAE(BaseAIS):
             [ULA(step_size=self.epsilons[0], learnable=False, transforms=transforms)
              for _ in range(self.K)])
         self.save_hyperparameters()
-        self.score_matching = use_transform
+        self.score_matching = use_transforms
         
         
     def configure_optimizers(self):
@@ -563,7 +563,7 @@ class ULA_VAE(BaseAIS):
                                                                       target=annealing_logdens)
             return z_new
         else:
-            z_new, current_log_weights, directions, socre_match_cur = self.transitions[current_num].make_transition(z=z, x=x,
+            z_new, current_log_weights, directions, score_match_cur = self.transitions[current_num].make_transition(z=z, x=x,
                                                                                                    target=annealing_logdens)
             return z_new, current_log_weights, directions, score_match_cur
 
