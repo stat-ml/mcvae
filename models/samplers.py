@@ -219,10 +219,13 @@ class ULA(nn.Module):
         self.transforms = False
         self.add_nn = None
         self.scale_nn = None
+        self.score_matching = False
         if transforms is not None:
             self.transforms = True
             self.add_nn = transforms()
-            self.scale_nn = transforms()
+            self.scale_nn = transforms() ###just test with step size at the moment
+            #self.scale_nn = lambda z, sign: 1. 
+            self.score_matching = True
 
     @property
     def step_size(self):
@@ -232,6 +235,7 @@ class ULA(nn.Module):
         eps = torch.randn_like(z_old)
         self.log_jac = torch.zeros_like(z_old[:, 0])
         if not self.transforms:
+            add = torch.zeros_like(z_old)
             update = torch.sqrt(2 * self.step_size) * eps + self.step_size * self.get_grad(z=z_old,
                                                                                            target=target,
                                                                                            x=x)
@@ -239,9 +243,10 @@ class ULA(nn.Module):
             eps_reverse = (z_old - z_new - self.step_size * self.get_grad(z=z_new, target=target, x=x)) / torch.sqrt(
                 2 * self.step_size)
         else:
-            z_new = self.add_nn(z_old) + self.scale_transform(z_old, sign="+") * eps
-            eps_reverse = (z_old - self.add_nn(z_new)) / self.scale_transform(z_new, sign="-")
-        return z_new, eps, eps_reverse
+            add = self.add_nn(z=z_old, x=x)
+            z_new = add +  torch.sqrt(2 * self.step_size) * eps
+            eps_reverse = (z_old - self.add_nn(z=z_old, x=x)) / torch.sqrt(2 * self.step_size)
+        return z_new, eps, eps_reverse, (add - self.get_grad(z=z_old, target=target, x=x))**2
 
     def scale_transform(self, z, sign='+'):
         S = torch.sigmoid(self.scale_nn(z))
@@ -264,7 +269,7 @@ class ULA(nn.Module):
         ############ Then we compute new points and densities ############
         std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
 
-        z_upd, eps, eps_reverse = self._forward_step(z_old=z, x=x, target=target)
+        z_upd, eps, eps_reverse, score_match_cur = self._forward_step(z_old=z, x=x, target=target)
 
         proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
@@ -282,7 +287,7 @@ class ULA(nn.Module):
             a, _ = acceptance_ratio(log_t, log_1_t, use_barker=False)
         ###
 
-        return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a
+        return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a, score_match_cur
 
     def get_grad(self, z, target, x=None):
         flag = z.requires_grad
