@@ -552,10 +552,10 @@ class ULA_VAE(BaseAIS):
                                              lr=1e-3, eps=1e-4)
         encoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(encoder_optimizer, lambda_lr)
         
-        score_matching_optimizzr = torch.optim.Adam(self.transitions.parameters(), lr=1e-3, eps=1e-4)
-        score_matching_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(score_matching_optimizzr, lambda_lr)
+        score_matching_optimizer = torch.optim.Adam(self.transitions.parameters(), lr=1e-3, eps=1e-4)
+        score_matching_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(score_matching_optimizer, lambda_lr)
 
-        return [decoder_optimizer, encoder_optimizer], [decoder_scheduler_lr, encoder_scheduler_lr]
+        return [decoder_optimizer, encoder_optimizer, score_matching_optimizer], [decoder_scheduler_lr, encoder_scheduler_lr, score_matching_scheduler_lr]
 
     def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
         if nll:
@@ -623,7 +623,7 @@ class ULA_VAE(BaseAIS):
         loss_enc = self.loss_function(sum_log_weights=sum_log_weights)
         loss_dec = self.loss_function(sum_log_weights=sum_log_weights)
         loss_sm = loss_sm.sum(1).mean()
-        return loss_enc, loss_dec, loss_sm, all_acceptance, z_transformed
+        return loss_enc, loss_dec, all_acceptance, loss_sm, z_transformed
 
     def loss_function(self, sum_log_weights):
         batch_size = sum_log_weights.shape[0] // self.num_samples
@@ -633,7 +633,7 @@ class ULA_VAE(BaseAIS):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x, _ = batch
-        inference_part = {0: False, 1: True}[optimizer_idx]
+        inference_part = {0: False, 1: True, 2: True}[optimizer_idx]
         if optimizer_idx == 0:  # decoder
             with torch.no_grad():
                 z, mu, logvar = self.enc_rep(x)
@@ -651,6 +651,8 @@ class ULA_VAE(BaseAIS):
                                                                               logvar=logvar,
                                                                               inference_part=inference_part)
         
-        
-        loss = self.loss_function(sum_log_weights)
+        if optimizer_idx == 2:
+            loss = loss_sm.sum(1).mean()
+        else:
+            loss = self.loss_function(sum_log_weights)
         return {"loss": loss}
