@@ -19,7 +19,6 @@ class Base(pl.LightningModule):
         self.dataset = dataset
         self.hidden_dim = hidden_dim
         # Define Encoder part
-        self.shape = shape
         self.encoder_net = get_encoder(net_type, act_func, hidden_dim, dataset, shape=shape)
         # # Define Decoder part
         self.decoder_net = get_decoder(net_type, act_func, hidden_dim, dataset, shape=shape)
@@ -93,6 +92,11 @@ class Base(pl.LightningModule):
                                               self.current_epoch)
             self.logger.experiment.add_scalar(f'{self.dataset}/{self.name}/avg_val_loss_dec', val_loss_dec,
                                               self.current_epoch)
+            if "val_loss_score_match" in outputs[0].keys():
+                val_loss_score_match = torch.stack([x['val_loss_score_match'] for x in outputs]).mean()
+                self.logger.experiment.add_scalar(f'{self.dataset}/{self.name}/avg_val_loss_score_match',
+                                                  val_loss_score_match,
+                                                  self.current_epoch)
 
         if "acceptance_rate" in outputs[0].keys():
             acceptance = torch.stack([x['acceptance_rate'] for x in outputs]).mean(0)
@@ -532,8 +536,9 @@ class ULA_VAE(BaseAIS):
         super().__init__(**kwargs)
         if use_transforms:
             # if kwargs['score_matching']: to write it better
-            transforms = lambda: ULA_nn_sm(input=kwargs['hidden_dim'] + self.shape ** 2, output=kwargs['hidden_dim'],
-                                           hidden=(kwargs['hidden_dim'], kwargs['hidden_dim']),
+            transforms = lambda: ULA_nn_sm(input=kwargs['hidden_dim'] + kwargs['shape'] ** 2,
+                                           output=kwargs['hidden_dim'],
+                                           hidden=(kwargs['hidden_dim'] + 100, kwargs['hidden_dim'] + 100),
                                            h_dim=None)
         else:
             transforms = None
@@ -545,11 +550,11 @@ class ULA_VAE(BaseAIS):
 
     def configure_optimizers(self):
         lambda_lr = lambda epoch: 10 ** (-epoch / 7.0)
-        decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-4)
+        decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-4, eps=1e-5)
         decoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(decoder_optimizer, lambda_lr)
 
         encoder_optimizer = torch.optim.Adam(list(self.encoder_net.parameters()),
-                                             lr=1e-3, eps=1e-4)
+                                             lr=1e-4, eps=1e-5)
         encoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(encoder_optimizer, lambda_lr)
 
         score_matching_optimizer = torch.optim.Adam(self.transitions.parameters(), lr=1e-3, eps=1e-4)
@@ -661,3 +666,13 @@ class ULA_VAE(BaseAIS):
         else:
             loss = self.loss_function(sum_log_weights)
         return {"loss": loss}
+
+    def validation_step(self, batch, batch_idx):
+        output = self.step(batch)
+        d = {"val_loss_enc": output[0], "val_loss_dec": output[1], "acceptance_rate": output[2].mean(1),
+             "val_loss_score_match": output[3]}
+        if (self.current_epoch % 10 == 0):
+            nll = self.evaluate_nll(batch=batch,
+                                    beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
+            d.update({"nll": nll})
+        return d
