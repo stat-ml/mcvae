@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
-from models.aux import ULA_nn, ULA_nn_sm
+from models.aux import ULA_nn_sm
 from models.decoders import get_decoder
 from models.encoders import get_encoder
 from models.samplers import HMC, MALA, ULA
@@ -19,6 +19,7 @@ class Base(pl.LightningModule):
         self.dataset = dataset
         self.hidden_dim = hidden_dim
         # Define Encoder part
+        self.shape = shape
         self.encoder_net = get_encoder(net_type, act_func, hidden_dim, dataset, shape=shape)
         # # Define Decoder part
         self.decoder_net = get_decoder(net_type, act_func, hidden_dim, dataset, shape=shape)
@@ -527,13 +528,13 @@ class AIS_VAE(BaseAIS):
 
 
 class ULA_VAE(BaseAIS):
-    def __init__(self, use_transforms=False, obs_dim =784, **kwargs):
+    def __init__(self, use_transforms=False, **kwargs):
         super().__init__(**kwargs)
         if use_transforms:
-            #if kwargs['score_matching']: to write it better
-            transforms = lambda: ULA_nn_sm(input=kwargs['hidden_dim']+obs_dim, output=kwargs['hidden_dim'],
-                                        hidden=(kwargs['hidden_dim'], kwargs['hidden_dim']),
-                                        h_dim=None)
+            # if kwargs['score_matching']: to write it better
+            transforms = lambda: ULA_nn_sm(input=kwargs['hidden_dim'] + self.shape ** 2, output=kwargs['hidden_dim'],
+                                           hidden=(kwargs['hidden_dim'], kwargs['hidden_dim']),
+                                           h_dim=None)
         else:
             transforms = None
         self.transitions = nn.ModuleList(
@@ -541,8 +542,7 @@ class ULA_VAE(BaseAIS):
              for _ in range(self.K)])
         self.save_hyperparameters()
         self.score_matching = use_transforms
-        
-        
+
     def configure_optimizers(self):
         lambda_lr = lambda epoch: 10 ** (-epoch / 7.0)
         decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-4)
@@ -551,11 +551,13 @@ class ULA_VAE(BaseAIS):
         encoder_optimizer = torch.optim.Adam(list(self.encoder_net.parameters()),
                                              lr=1e-3, eps=1e-4)
         encoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(encoder_optimizer, lambda_lr)
-        
+
         score_matching_optimizer = torch.optim.Adam(self.transitions.parameters(), lr=1e-3, eps=1e-4)
         score_matching_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(score_matching_optimizer, lambda_lr)
 
-        return [decoder_optimizer, encoder_optimizer, score_matching_optimizer], [decoder_scheduler_lr, encoder_scheduler_lr, score_matching_scheduler_lr]
+        return [decoder_optimizer, encoder_optimizer, score_matching_optimizer], [decoder_scheduler_lr,
+                                                                                  encoder_scheduler_lr,
+                                                                                  score_matching_scheduler_lr]
 
     def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
         if nll:
@@ -563,8 +565,9 @@ class ULA_VAE(BaseAIS):
                                                                       target=annealing_logdens)
             return z_new
         else:
-            z_new, current_log_weights, directions, score_match_cur = self.transitions[current_num].make_transition(z=z, x=x,
-                                                                                                   target=annealing_logdens)
+            z_new, current_log_weights, directions, score_match_cur = self.transitions[current_num].make_transition(z=z,
+                                                                                                                    x=x,
+                                                                                                                    target=annealing_logdens)
             return z_new, current_log_weights, directions, score_match_cur
 
     def run_transitions(self, z, x, mu, logvar, inference_part):
@@ -583,23 +586,25 @@ class ULA_VAE(BaseAIS):
         z_transformed = z
         loss_sm = torch.zeros_like(z)
 
-        for i in range(1, self.K + 1): 
+        for i in range(1, self.K + 1):
             if inference_part:
                 z_transformed, current_log_weights, directions, score_match_cur = self.one_transition(current_num=i - 1,
-                                                                                     z=z_transformed,
-                                                                                     x=x,
-                                                                                     annealing_logdens=annealing_logdens(
-                                                                                         beta=self.beta[i]))
+                                                                                                      z=z_transformed,
+                                                                                                      x=x,
+                                                                                                      annealing_logdens=annealing_logdens(
+                                                                                                          beta=
+                                                                                                          self.beta[i]))
             else:
                 with torch.no_grad():
-                    z_transformed, current_log_weights, directions, score_match_cur = self.one_transition(current_num=i - 1,
-                                                                                         z=z_transformed,
-                                                                                         x=x,
-                                                                                         annealing_logdens=annealing_logdens(
-                                                                                             beta=self.beta[i]))
+                    z_transformed, current_log_weights, directions, score_match_cur = self.one_transition(
+                        current_num=i - 1,
+                        z=z_transformed,
+                        x=x,
+                        annealing_logdens=annealing_logdens(
+                            beta=self.beta[i]))
             loss_sm += score_match_cur
             sum_log_weights += current_log_weights
-            all_acceptance = torch.cat([all_acceptance, 1.*directions[None]])
+            all_acceptance = torch.cat([all_acceptance, 1. * directions[None]])
 
         self.update_stepsize(all_acceptance.mean(1))
 
@@ -615,10 +620,10 @@ class ULA_VAE(BaseAIS):
         else:
             x = x.repeat(self.num_samples, 1)
         z_transformed, sum_log_weights, all_acceptance, loss_sm = self.run_transitions(z=z,
-                                                                              x=x,
-                                                                              mu=mu,
-                                                                              logvar=logvar,
-                                                                              inference_part=False)
+                                                                                       x=x,
+                                                                                       mu=mu,
+                                                                                       logvar=logvar,
+                                                                                       inference_part=False)
 
         loss_enc = self.loss_function(sum_log_weights=sum_log_weights)
         loss_dec = self.loss_function(sum_log_weights=sum_log_weights)
@@ -646,11 +651,11 @@ class ULA_VAE(BaseAIS):
             x = x.repeat(self.num_samples, 1)
 
         z_transformed, sum_log_weights, all_acceptance, loss_sm = self.run_transitions(z=z,
-                                                                              x=x,
-                                                                              mu=mu,
-                                                                              logvar=logvar,
-                                                                              inference_part=inference_part)
-        
+                                                                                       x=x,
+                                                                                       mu=mu,
+                                                                                       logvar=logvar,
+                                                                                       inference_part=inference_part)
+
         if optimizer_idx == 2:
             loss = loss_sm.sum(1).mean()
         else:

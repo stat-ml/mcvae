@@ -1,6 +1,5 @@
-import torch.nn as nn
 import torch
-import pdb
+import torch.nn as nn
 
 
 class DoubleConv(nn.Module):
@@ -81,14 +80,13 @@ class ULA_nn(nn.Module):
             h = layer(h)
         return self.llast(h)
 
-    
-    
+
 class ULA_nn_sm(nn.Module):
     def __init__(self, input=2, output=2, hidden=(50,), h_dim=None):
         super().__init__()
         if h_dim is None:
             h_dim = 0
-        self.l1 = nn.Linear(in_features=input, out_features=hidden[0])
+        self.l1 = nn.Linear(in_features=input + h_dim, out_features=hidden[0])
         self.act_func = nn.LeakyReLU()
         self.hidden_part = nn.ModuleList([])
         for i in range(1, len(hidden)):
@@ -97,12 +95,12 @@ class ULA_nn_sm(nn.Module):
         self.llast = nn.Linear(in_features=hidden[-1], out_features=output)
 
     def forward(self, z, x):
-        if len(x.shape)>2:
+        if len(x.shape) > 2:
             x_ = x.view((z.shape[0], -1))
-            h = torch.cat([z,x_], dim = 1)
+            h = torch.cat([z, x_], dim=1)
         else:
-            h = torch.cat([z,x], dim = 1)
+            h = torch.cat([z, x], dim=1)
         h = self.act_func(self.l1(h))
         for layer in self.hidden_part:
-            h = layer(h) ###potentially good to write here layer(torch.cat([z,h], dim = 1)) ??
+            h = layer(h)  ###potentially good to write here layer(torch.cat([z,h], dim = 1)) ??
         return self.llast(h)

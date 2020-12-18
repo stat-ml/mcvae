@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import pdb
 
 
 def acceptance_ratio(log_t, log_1_t, use_barker):
@@ -224,8 +223,8 @@ class ULA(nn.Module):
         if transforms is not None:
             self.transforms = True
             self.add_nn = transforms()
-            self.scale_nn = transforms() ###just test with step size at the moment
-            #self.scale_nn = lambda z, sign: 1. 
+            self.scale_nn = transforms()  ###just test with step size at the moment
+            # self.scale_nn = lambda z, sign: 1.
             self.score_matching = True
 
     @property
@@ -233,7 +232,7 @@ class ULA(nn.Module):
         return torch.exp(self.log_stepsize)
 
     def _forward_step(self, z_old, x=None, target=None):
-        #pdb.set_trace()
+        # pdb.set_trace()
         eps = torch.randn_like(z_old)
         self.log_jac = torch.zeros_like(z_old[:, 0])
         if not self.transforms:
@@ -246,9 +245,9 @@ class ULA(nn.Module):
                 2 * self.step_size)
         else:
             add = self.add_nn(z=z_old, x=x)
-            z_new = z_old + self.step_size * add +  torch.sqrt(2 * self.step_size) * eps
+            z_new = z_old + self.step_size * add + torch.sqrt(2 * self.step_size) * eps
             eps_reverse = (z_old - z_new - self.step_size * self.add_nn(z=z_new, x=x)) / torch.sqrt(2 * self.step_size)
-        return z_new, eps, eps_reverse, (add - self.get_grad(z=z_old, target=target, x=x))**2
+        return z_new, eps, eps_reverse, (add - self.get_grad(z=z_old, target=target, x=x)) ** 2
 
     def scale_transform(self, z, sign='+'):
         S = torch.sigmoid(self.scale_nn(z))
