@@ -1,6 +1,6 @@
-from models.aux import Up, OutConv
 import torch.nn as nn
-import numpy as np
+
+from models.aux import Up, OutConv
 
 
 class View(nn.Module):

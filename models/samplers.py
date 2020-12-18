@@ -23,9 +23,22 @@ def acceptance_ratio(log_t, log_1_t, use_barker):
     return a, current_log_alphas
 
 
+def compute_grad(z, target, x):
+    flag = z.requires_grad
+    if flag:
+        z_ = z.requires_grad_(True)
+    else:
+        z_ = z.detach().requires_grad_(True)
+    with torch.enable_grad():
+        grad = _get_grad(z=z_, target=target, x=x)
+        if not flag:
+            grad = grad.detach()
+        return grad
+
+
 def _get_grad(z, target, x=None):
     s = target(x=x, z=z)
-    grad = torch.autograd.grad(s.sum(), z, create_graph=True, retain_graph=True)[0]
+    grad = torch.autograd.grad(s.sum(), z, create_graph=True)[0]
     return grad
 
 
@@ -122,14 +135,8 @@ class HMC(nn.Module):
         return z_, p_
 
     def get_grad(self, z, target, x=None):
-        flag = z.requires_grad
-        if flag:
-            z_ = z.clone().requires_grad_(True)
-        else:
-            z_ = z.detach().clone().requires_grad_(True)
-        with torch.enable_grad():
-            grad = _get_grad(z=z_, target=target, x=x)
-            return grad
+        grad = compute_grad(z, target, x)
+        return grad
 
 
 class MALA(nn.Module):
@@ -194,14 +201,8 @@ class MALA(nn.Module):
         return z_new, a.to(torch.float32), current_log_alphas
 
     def get_grad(self, z, target, x=None):
-        flag = z.requires_grad
-        if flag:
-            z_ = z.clone().requires_grad_(True)
-        else:
-            z_ = z.detach().clone().requires_grad_(True)
-        with torch.enable_grad():
-            grad = _get_grad(z=z_, target=target, x=x)
-            return grad
+        grad = compute_grad(z, target, x)
+        return grad
 
 
 class ULA(nn.Module):
@@ -291,11 +292,5 @@ class ULA(nn.Module):
         return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a, score_match_cur
 
     def get_grad(self, z, target, x=None):
-        flag = z.requires_grad
-        if flag:
-            z_ = z.clone().requires_grad_(True)
-        else:
-            z_ = z.detach().clone().requires_grad_(True)
-        with torch.enable_grad():
-            grad = _get_grad(z=z_, target=target, x=x)
-            return grad
+        grad = compute_grad(z, target, x)
+        return grad
