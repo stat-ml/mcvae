@@ -25,7 +25,7 @@ def acceptance_ratio(log_t, log_1_t, use_barker):
 
 def compute_grad(z, target, x):
     flag = z.requires_grad
-    if flag:
+    if not flag:
         z_ = z.requires_grad_(True)
     else:
         z_ = z.detach().requires_grad_(True)
@@ -33,6 +33,7 @@ def compute_grad(z, target, x):
         grad = _get_grad(z=z_, target=target, x=x)
         if not flag:
             grad = grad.detach()
+            z_.requires_grad_(False)
         return grad
 
 
@@ -195,7 +196,8 @@ class MALA(nn.Module):
 
         a, current_log_alphas = acceptance_ratio(log_t, log_1_t, use_barker=self.use_barker)
 
-        z_new = z_upd
+        z_new = torch.empty_like(z_upd)
+        z_new[a] = z_upd[a]
         z_new[~a] = z[~a]
 
         return z_new, a.to(torch.float32), current_log_alphas
@@ -233,7 +235,6 @@ class ULA(nn.Module):
         return torch.exp(self.log_stepsize)
 
     def _forward_step(self, z_old, x=None, target=None):
-        # pdb.set_trace()
         eps = torch.randn_like(z_old)
         self.log_jac = torch.zeros_like(z_old[:, 0])
         if not self.transforms:
