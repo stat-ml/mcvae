@@ -69,7 +69,7 @@ if __name__ == '__main__':
         model = Stacked_VAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
                             hidden_dim=args.hidden_dim,
                             name=args.model, net_type=args.net_type, dataset=args.dataset, step_size=args.step_size,
-                            K=args.K, use_barker=args.use_barker, n_first_iterations=10, first_model='IWAE',
+                            K=args.K, use_barker=args.use_barker, n_first_iterations=5, first_model='VAE',
                             second_model='AIS_VAE')
     else:
         raise ValueError

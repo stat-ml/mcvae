@@ -167,10 +167,10 @@ class Base(pl.LightningModule):
         output = self.step(batch)
         d = {"val_loss": output[0]}
         # TODO: Bypass self.current_epoch here or 'dataset'
-        # if (self.current_epoch % 10 == 0) and (self.dataset != 'toy'):
-        #     nll = self.evaluate_nll(batch=batch,
-        #                             beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
-        #     d.update({"nll": nll})
+        if (self.current_epoch == 29):
+            nll = self.evaluate_nll(batch=batch,
+                                    beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
+            d.update({"nll": nll})
         return d
 
     def evaluate_nll(self, batch, beta):
@@ -192,11 +192,12 @@ class Base(pl.LightningModule):
                                         annealing_logdens=annealing_logdens(beta=beta[i]), nll=True)[0]
 
                 sum_log_weights += (beta[i + 1] - beta[i]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z=z))
-            sum_log_weights = sum_log_weights.view(batch[0].shape[0], n_samples)
-            batch_nll_estimator = torch.logsumexp(sum_log_weights,
-                                                  dim=-1)  ###Should be a vector of batchsize containing nll estimator for each term of the batch
+            sum_log_weights = sum_log_weights.view(n_samples, batch[0].shape[0])
+            batch_nll_estimator = -torch.logsumexp(sum_log_weights,
+                                                   dim=0) + torch.log(torch.tensor(n_samples, dtype=torch.float32,
+                                                                                    device=x.device))  ###Should be a vector of batchsize containing nll estimator for each term of the batch
 
-            return torch.mean(batch_nll_estimator, dim=-1)
+            return torch.mean(batch_nll_estimator)
 
 
 class VAE(Base):
@@ -322,10 +323,10 @@ class BaseAIS(Base):
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
         d = {"val_loss_enc": output[0], "val_loss_dec": output[1], "acceptance_rate": output[2].mean(1)}
-        # if self.current_epoch % 10 == 0:
-        #     nll = self.evaluate_nll(batch=batch,
-        #                             beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
-        #     d.update({"nll": nll})
+        if self.current_epoch == 29:
+            nll = self.evaluate_nll(batch=batch,
+                                    beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
+            d.update({"nll": nll})
         return d
 
 
@@ -600,7 +601,7 @@ class ULA_VAE(BaseAIS):
         output = self.step(batch)
         d = {"val_loss_enc": output[0], "val_loss_dec": output[1], "acceptance_rate": output[2].mean(1),
              "val_loss_score_match": output[3]}
-        if (self.current_epoch % 10 == 0):
+        if (self.current_epoch == 29):
             nll = self.evaluate_nll(batch=batch,
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
@@ -655,6 +656,11 @@ class Stacked_VAE(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         d = self.current_model.validation_step(batch, batch_idx)
+        if (self.current_epoch == 29):
+            nll = self.current_model.evaluate_nll(batch=batch,
+                                                  beta=torch.linspace(0., 1., 5, device=batch[0].device,
+                                                                      dtype=torch.float32))
+            d.update({"nll": nll})
         return d
 
     def configure_optimizers(self):
