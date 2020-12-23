@@ -420,8 +420,6 @@ class AIS_VAE(BaseAIS):
 
     def specific_transitions(self, z, x, init_logdens, annealing_logdens, inference_part=False):
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
-        # import pdb
-        # pdb.set_trace()
         sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z))
         sum_log_alpha = torch.zeros_like(z[:, 0])
         z_transformed = z

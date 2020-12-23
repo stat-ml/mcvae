@@ -26,9 +26,9 @@ def acceptance_ratio(log_t, log_1_t, use_barker):
 def compute_grad(z, target, x):
     flag = z.requires_grad
     if not flag:
-        z_ = z.requires_grad_(True)
+        z_ = z.detach().clone().requires_grad_(True)
     else:
-        z_ = z.detach().requires_grad_(True)
+        z_ = z.clone().requires_grad_(True)
     with torch.enable_grad():
         grad = _get_grad(z=z_, target=target, x=x)
         if not flag:
