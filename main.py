@@ -74,6 +74,6 @@ if __name__ == '__main__':
     else:
         raise ValueError
 
-    trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, fast_dev_run=False)
+    trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, fast_dev_run=False, gradient_clip_val=50.)
     pl.Trainer()
     trainer.fit(model, train_dataloader=train_loader, val_dataloaders=val_loader)

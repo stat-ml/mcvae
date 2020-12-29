@@ -28,7 +28,7 @@
 #python main.py --model Stacked_VAE --dataset omniglot --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 25 --net_type conv --num_samples 1 --max_epochs 30 --step_size 0.01 --K 7 --track_grad_norm 2
 #python main.py --model Stacked_VAE --dataset celeba --act_func leakyrelu --binarize False --use_barker False --hidden_dim 64 --batch_size 50 --net_type conv --num_samples 1 --max_epochs 30 --step_size 0.01 --K 7 --track_grad_norm 2 --limit_train_batches 0.1 --limit_val_batches 0.1
 
-python main.py --model AIS_VAE --dataset mnist --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 30 --step_size 0.01 --K 1 --track_grad_norm 2
+python main.py --model AIS_VAE --dataset mnist --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 30 --step_size 0.5 --K 1 --track_grad_norm 2
 #python main.py --model AIS_VAE --dataset mnist --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 30 --step_size 0.01 --K 2 --track_grad_norm 2
 #python main.py --model AIS_VAE --dataset mnist --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 30 --step_size 0.01 --K 3 --track_grad_norm 2
 #python main.py --model AIS_VAE --dataset mnist --act_func leakyrelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 30 --step_size 0.01 --K 5 --track_grad_norm 2

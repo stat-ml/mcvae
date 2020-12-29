@@ -24,7 +24,7 @@ def acceptance_ratio(log_t, log_1_t, use_barker):
 
 
 def compute_grad(z, target, x):
-    flag = z.requires_grad
+    flag = z.requires_grad  # True, if requires grad (means that we propagate gradients to some parameters)
     if not flag:
         z_ = z.detach().clone().requires_grad_(True)
     else:

@@ -195,7 +195,7 @@ class Base(pl.LightningModule):
             sum_log_weights = sum_log_weights.view(n_samples, batch[0].shape[0])
             batch_nll_estimator = -torch.logsumexp(sum_log_weights,
                                                    dim=0) + torch.log(torch.tensor(n_samples, dtype=torch.float32,
-                                                                                    device=x.device))  ###Should be a vector of batchsize containing nll estimator for each term of the batch
+                                                                                   device=x.device))  ###Should be a vector of batchsize containing nll estimator for each term of the batch
 
             return torch.mean(batch_nll_estimator)
 
@@ -276,7 +276,6 @@ class BaseAIS(Base):
     def run_transitions(self, z, x, mu, logvar, inference_part=False):
         init_logdens = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
             z).sum(-1)
-
         init_logdens_detached = lambda z: torch.distributions.Normal(loc=mu.detach(),
                                                                      scale=torch.exp(0.5 * logvar.detach())).log_prob(
             z).sum(-1)
