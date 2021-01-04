@@ -249,7 +249,7 @@ class IWAE(Base):
 
 
 class BaseAIS(Base):
-    def __init__(self, step_size, K, beta=None, **kwargs):
+    def __init__(self, step_size, K, beta=None, grad_skip_val=0., grad_clip_val=0., **kwargs):
         super().__init__(**kwargs)
         self.save_hyperparameters()
         self.K = K
@@ -262,6 +262,8 @@ class BaseAIS(Base):
         if beta is None:
             beta = torch.tensor(np.linspace(0., 1., self.K + 2), dtype=torch.float32)
         self.register_buffer('beta', beta)
+        self.grad_skip_val = grad_skip_val
+        self.grad_clip_val = grad_clip_val
 
     def configure_optimizers(self):
         lambda_lr = lambda epoch: 10 ** (-epoch / 7.0)
@@ -271,7 +273,7 @@ class BaseAIS(Base):
         encoder_optimizer = torch.optim.Adam(list(self.encoder_net.parameters()) + list(self.transitions.parameters()),
                                              lr=1e-3, eps=1e-4)
         encoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(encoder_optimizer, lambda_lr)
-        return [decoder_optimizer, encoder_optimizer], [decoder_scheduler_lr, encoder_scheduler_lr]
+        return [decoder_optimizer, encoder_optimizer]  # , [decoder_scheduler_lr, encoder_scheduler_lr]
 
     def run_transitions(self, z, x, mu, logvar, inference_part=False):
         init_logdens = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
@@ -295,7 +297,7 @@ class BaseAIS(Base):
         return output
 
     def update_stepsize(self, accept_rate):
-        accept_rate = list(accept_rate.cpu().data.squeeze().numpy())
+        accept_rate = list(accept_rate.cpu().data.numpy())
         for l in range(0, self.K - 1):
             if accept_rate[l] < self.epsilon_target:
                 self.epsilons[l] *= self.epsilon_decrease_alpha
@@ -434,7 +436,6 @@ class AIS_VAE(BaseAIS):
                     self.joint_logdensity()(z=z_transformed, x=x) - init_logdens(z=z))
             all_acceptance = torch.cat([all_acceptance, directions[None]])
 
-        all_acceptance = torch.cat([all_acceptance, directions[None]])
         self.update_stepsize(all_acceptance.mean(1))
         return z_transformed, sum_log_weights, sum_log_alpha, all_acceptance
 
@@ -474,19 +475,60 @@ class AIS_VAE(BaseAIS):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x, _ = batch
-        inference_part = {0: False, 1: True}[optimizer_idx]
-        with Stop_grads(not inference_part):
-            z, mu, logvar = self.enc_rep(x, self.num_samples)
+        if self.grad_skip_val == 0.:
+            inference_part = {0: False, 1: True}[optimizer_idx]
+            with Stop_grads(not inference_part):
+                z, mu, logvar = self.enc_rep(x, self.num_samples)
 
-        x = repeat_data(x, self.num_samples)
-        z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
-                                                                                             x=x,
-                                                                                             mu=mu,
-                                                                                             logvar=logvar,
-                                                                                             inference_part=inference_part)
-        loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
-                                  inference_part=inference_part)
-        return {"loss": loss}
+            x = repeat_data(x, self.num_samples)
+            z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
+                                                                                                 x=x,
+                                                                                                 mu=mu,
+                                                                                                 logvar=logvar,
+                                                                                                 inference_part=inference_part)
+            loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
+                                      inference_part=inference_part)
+            return {"loss": loss}
+        else:
+            (opt_decoder, opt_encoder_flows) = self.optimizers()
+
+            ## decoder
+            with Stop_grads(True):
+                z, mu, logvar = self.enc_rep(x, self.num_samples)
+
+            x_ = repeat_data(x, self.num_samples)
+            z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
+                                                                                                 x=x_,
+                                                                                                 mu=mu,
+                                                                                                 logvar=logvar,
+                                                                                                 inference_part=False)
+            loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
+                                      inference_part=False)
+            self.manual_backward(loss, opt_decoder)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.decoder_net.parameters(), self.grad_clip_val).item()
+            if grad_norm < self.grad_skip_val:
+                opt_decoder.step()
+
+            ## encoder and flows
+            with Stop_grads(False):
+                z, mu, logvar = self.enc_rep(x, self.num_samples)
+
+            x_ = repeat_data(x, self.num_samples)
+            z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
+                                                                                                 x=x_,
+                                                                                                 mu=mu,
+                                                                                                 logvar=logvar,
+                                                                                                 inference_part=True)
+            loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
+                                      inference_part=True)
+            self.manual_backward(loss, opt_encoder_flows)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                list(self.encoder_net.parameters()) + list(self.transitions.parameters()),
+                self.grad_clip_val).item()
+            if grad_norm < self.grad_skip_val:
+                opt_encoder_flows.step()
+            return
 
 
 class ULA_VAE(BaseAIS):

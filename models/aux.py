@@ -2,9 +2,17 @@ import torch
 import torch.nn as nn
 
 
+def pad_channels(t, width):
+    d1, d2, d3, d4 = t.shape
+    empty = torch.zeros(d1, width, d3, d4, device=t.device)
+    empty[:, :d2, :, :] = t
+    return empty
+
+
 class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, act_func, mid_channels=None):
+    def __init__(self, in_channels, out_channels, act_func, mid_channels=None, skip_connection=True):
         super().__init__()
+        self.skip_connection = skip_connection
         if not mid_channels:
             mid_channels = out_channels
         self.double_conv = nn.Sequential(
@@ -15,7 +23,11 @@ class DoubleConv(nn.Module):
         )
 
     def forward(self, x):
-        return self.double_conv(x)
+        conv = self.double_conv(x)
+        if self.skip_connection and x.shape[1] <= conv.shape[1]:
+            return pad_channels(x, conv.shape[1]) + conv
+        else:
+            return conv
 
 
 class Down(nn.Module):
@@ -33,15 +45,15 @@ class Down(nn.Module):
 class Up(nn.Module):
     """Upscaling then double conv"""
 
-    def __init__(self, in_channels, out_channels, act_func, bilinear=True, size=None):
+    def __init__(self, in_channels, out_channels, act_func, upsampling=True, size=None):
         super().__init__()
 
-        # if bilinear, use the normal convolutions to reduce the number of channels
-        if bilinear:
+        # if upsampling, use the normal convolutions to reduce the number of channels
+        if upsampling:
             if size is None:
-                self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+                self.up = nn.Upsample(scale_factor=2, mode='nearest')  # , align_corners=True
             else:
-                self.up = nn.Upsample(size=size, mode='bilinear', align_corners=True)
+                self.up = nn.Upsample(size=size, mode='nearest')  # align_corners=True
             self.conv = DoubleConv(in_channels, out_channels, act_func, in_channels // 2)
         else:
             self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)

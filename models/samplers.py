@@ -164,7 +164,7 @@ class MALA(nn.Module):
         update = torch.sqrt(2 * self.step_size) * eps + self.step_size * self.get_grad(z=z_old,
                                                                                        target=target,
                                                                                        x=x)
-        return z_old + update, eps
+        return z_old + update, update, eps
 
     def make_transition(self, z, target, x=None):
         """
@@ -180,12 +180,12 @@ class MALA(nn.Module):
         ############ Then we compute new points and densities ############
         std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
 
-        z_upd, eps = self._forward_step(z_old=z, x=x, target=target)
+        z_upd, update, eps = self._forward_step(z_old=z, x=x, target=target)
 
         target_log_density_upd = target(z=z_upd, x=x)
         target_log_density_old = target(z=z, x=x)
 
-        eps_reverse = (z - z_upd - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / torch.sqrt(
+        eps_reverse = (-update - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / torch.sqrt(
             2 * self.step_size)
         proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)

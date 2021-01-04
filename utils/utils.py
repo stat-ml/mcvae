@@ -4,6 +4,7 @@ from random import shuffle
 
 import numpy as np
 import torch
+import torch.nn as nn
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets
@@ -119,4 +120,5 @@ def get_activations():
         "logsoftmax": lambda: torch.nn.LogSoftmax(dim=-1),
         "logsigmoid": torch.nn.LogSigmoid,
         "softplus": torch.nn.Softplus,
+        "gelu": nn.GELU
     }

@@ -10,23 +10,32 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser = pl.Trainer.add_argparse_args(parser)
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
+
     parser.add_argument("--model", default="Stacked_VAE",
                         choices=["VAE", "IWAE", "AIWAE", "AIS_VAE", "ULA_VAE", "Stacked_VAE"])
+
+    ## Dataset params
+    parser.add_argument("--dataset", default='mnist', choices=['mnist', 'fashionmnist', 'cifar', 'omniglot', 'celeba'])
+    parser.add_argument("--binarize", type=str2bool, default=False)
+    ## Training parameters
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--val_batch_size", default=50, type=int)
+    parser.add_argument("--grad_skip_val", type=float, default=0.)
+    parser.add_argument("--grad_clip_val", type=float, default=0.)
+
+    ## Architecture
     parser.add_argument("--hidden_dim", default=64, type=int)
-    parser.add_argument("--dataset", default='mnist', choices=['mnist', 'fashionmnist', 'cifar', 'omniglot', 'celeba'])
     parser.add_argument("--num_samples", default=1, type=int)
     parser.add_argument("--act_func", default="leakyrelu",
-                        choices=["relu", "leakyrelu", "tanh", "logsigmoid", "logsoftmax", "softplus"])
+                        choices=["relu", "leakyrelu", "tanh", "logsigmoid", "logsoftmax", "softplus", "gelu"])
     parser.add_argument("--net_type", choices=["fc", "conv"], type=str, default="conv")
 
+    ## Specific parameters
     parser.add_argument("--K", type=int, default=3)
     parser.add_argument("--n_leapfrogs", type=int, default=3)
     parser.add_argument("--step_size", type=float, default=0.01)
     parser.add_argument("--use_barker", type=str2bool, default=False)
-    parser.add_argument("--binarize", type=str2bool, default=False)
-    parser.add_argument("--use_transforms", type=str2bool, default=False)
+    parser.add_argument("--use_transforms", type=str2bool, default=False)  # for ULA
 
     act_func = get_activations()
 
@@ -59,7 +68,8 @@ if __name__ == '__main__':
         model = AIS_VAE(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
                         num_samples=args.num_samples,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
-                        hidden_dim=args.hidden_dim, name=args.model)
+                        hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
+                        grad_clip_val=args.grad_clip_val)
     elif args.model == 'ULA_VAE':
         model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
                         num_samples=args.num_samples,
@@ -74,6 +84,9 @@ if __name__ == '__main__':
     else:
         raise ValueError
 
-    trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, fast_dev_run=False, gradient_clip_val=50.)
-    pl.Trainer()
+    automatic_optimization = args.grad_skip_val == 0.
+    args.gradient_clip_val = args.grad_clip_val
+
+    trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, fast_dev_run=False,
+                                            automatic_optimization=automatic_optimization)
     trainer.fit(model, train_dataloader=train_loader, val_dataloaders=val_loader)

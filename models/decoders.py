@@ -36,19 +36,19 @@ class FC_decoder_mnist(nn.Module):
 
 
 class CONV_decoder(nn.Module):
-    def __init__(self, act_func, hidden_dim, n_channels, shape, bilinear=True):
+    def __init__(self, act_func, hidden_dim, n_channels, shape, upsampling=True):
         super().__init__()
-        self.bilinear = bilinear
-        factor = 2 if bilinear else 1
+        self.upsampling = upsampling
+        factor = 2 if upsampling else 1
         num_maps = 16
         shape_init = shape
         shape = shape // 8
         self.net = nn.Sequential(
             nn.Linear(hidden_dim, (8 * num_maps // factor) * (shape ** 2)),
             View(((8 * num_maps // factor), shape, shape)),
-            Up(8 * num_maps // factor, 4 * num_maps // factor, act_func, bilinear, (shape * 2, shape * 2)),
-            Up(4 * num_maps // factor, 2 * num_maps // factor, act_func, bilinear, (shape * 4, shape * 4)),
-            Up(2 * num_maps // factor, num_maps, act_func, bilinear, (shape_init, shape_init)),
+            Up(8 * num_maps // factor, 4 * num_maps // factor, act_func, upsampling, (shape * 2, shape * 2)),
+            Up(4 * num_maps // factor, 2 * num_maps // factor, act_func, upsampling, (shape * 4, shape * 4)),
+            Up(2 * num_maps // factor, num_maps, act_func, upsampling, (shape_init, shape_init)),
             OutConv(num_maps, n_channels)
         )
         self.hidden_dim = hidden_dim

@@ -19,11 +19,11 @@ class FC_encoder_mnist(nn.Module):
 
 
 class CONV_encoder(nn.Module):
-    def __init__(self, act_func, hidden_dim, n_channels, shape, bilinear=True):
+    def __init__(self, act_func, hidden_dim, n_channels, shape, upsampling=True):
         super().__init__()
         self.n_channels = n_channels
-        self.bilinear = bilinear
-        factor = 2 if bilinear else 1
+        self.upsampling = upsampling
+        factor = 2 if upsampling else 1
         num_maps = 16
         num_units = ((shape // 8) ** 2) * (8 * num_maps // factor)
 
