@@ -36,6 +36,8 @@ if __name__ == '__main__':
     parser.add_argument("--step_size", type=float, default=0.01)
     parser.add_argument("--use_barker", type=str2bool, default=False)
     parser.add_argument("--use_transforms", type=str2bool, default=False)  # for ULA
+    parser.add_argument("--grads_through_alphas", type=str2bool, default=False)  # for AIS VAE
+    parser.add_argument("--use_cloned_decoder", type=str2bool, default=False)  # for AIS VAE
 
     act_func = get_activations()
 
@@ -69,7 +71,8 @@ if __name__ == '__main__':
                         num_samples=args.num_samples,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
-                        grad_clip_val=args.grad_clip_val)
+                        grad_clip_val=args.grad_clip_val, grads_through_alphas=args.grads_through_alphas,
+                        use_cloned_decoder=args.use_cloned_decoder)
     elif args.model == 'ULA_VAE':
         model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
                         num_samples=args.num_samples,
