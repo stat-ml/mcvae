@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
 
-from models import VAE, IWAE, AIWAE, AIS_VAE, ULA_VAE, Stacked_VAE
+from models import VAE, IWAE, AIWAE, AIS_VAE, AIS_VAE_S, ULA_VAE, Stacked_VAE
 from utils import make_dataloaders, get_activations, str2bool
 
 if __name__ == '__main__':
@@ -12,7 +12,7 @@ if __name__ == '__main__':
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
 
     parser.add_argument("--model", default="Stacked_VAE",
-                        choices=["VAE", "IWAE", "AIWAE", "AIS_VAE", "ULA_VAE", "Stacked_VAE"])
+                        choices=["VAE", "IWAE", "AIWAE", "AIS_VAE", "AIS_VAE_S", "ULA_VAE", "Stacked_VAE"])
 
     ## Dataset params
     parser.add_argument("--dataset", default='mnist', choices=['mnist', 'fashionmnist', 'cifar', 'omniglot', 'celeba'])
@@ -36,7 +36,6 @@ if __name__ == '__main__':
     parser.add_argument("--step_size", type=float, default=0.01)
     parser.add_argument("--use_barker", type=str2bool, default=False)
     parser.add_argument("--use_transforms", type=str2bool, default=False)  # for ULA
-    parser.add_argument("--grads_through_alphas", type=str2bool, default=False)  # for AIS VAE
     parser.add_argument("--use_cloned_decoder", type=str2bool, default=False)  # for AIS VAE
 
     act_func = get_activations()
@@ -71,8 +70,15 @@ if __name__ == '__main__':
                         num_samples=args.num_samples,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
-                        grad_clip_val=args.grad_clip_val, grads_through_alphas=args.grads_through_alphas,
+                        grad_clip_val=args.grad_clip_val,
                         use_cloned_decoder=args.use_cloned_decoder)
+    elif args.model == 'AIS_VAE_S':
+        model = AIS_VAE_S(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
+                          num_samples=args.num_samples,
+                          dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
+                          hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
+                          grad_clip_val=args.grad_clip_val,
+                          use_cloned_decoder=args.use_cloned_decoder)
     elif args.model == 'ULA_VAE':
         model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
                         num_samples=args.num_samples,

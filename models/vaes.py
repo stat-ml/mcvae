@@ -102,7 +102,7 @@ class Base(pl.LightningModule):
 
     def joint_logdensity(self, use_true_decoder=None):
         def density(z, x):
-            if use_true_decoder is not None and use_true_decoder:
+            if (use_true_decoder is not None) and use_true_decoder:
                 x_reconst = self(z)
             elif hasattr(self, 'use_cloned_decoder') and self.use_cloned_decoder:
                 x_reconst = self.cloned_decoder(z)
@@ -255,8 +255,7 @@ class IWAE(Base):
 
 
 class BaseAIS(Base):
-    def __init__(self, step_size, K, beta=None, grad_skip_val=0., grad_clip_val=0., grads_through_alphas=False,
-                 use_cloned_decoder=False, **kwargs):
+    def __init__(self, step_size, K, beta=None, grad_skip_val=0., grad_clip_val=0., use_cloned_decoder=False, **kwargs):
         super().__init__(**kwargs)
         self.save_hyperparameters()
         self.K = K
@@ -271,7 +270,6 @@ class BaseAIS(Base):
         self.register_buffer('beta', beta)
         self.grad_skip_val = grad_skip_val
         self.grad_clip_val = grad_clip_val
-        self.grads_through_alphas = grads_through_alphas
         self.use_cloned_decoder = use_cloned_decoder
         if self.use_cloned_decoder:
             self.cloned_decoder = copy.deepcopy(self.decoder_net)
@@ -293,7 +291,7 @@ class BaseAIS(Base):
             z).sum(-1)
 
         ## If we need to prop grads thru alphas, use init_logdens(w/o detaching), otherwise init_logdens_detached
-        init_logdens_aux = init_logdens if self.grads_through_alphas else init_logdens_detached
+        init_logdens_aux = init_logdens if inference_part else init_logdens_detached
 
         annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdens_aux(
             z=z) + beta * self.joint_logdensity()(
@@ -438,10 +436,8 @@ class AIS_VAE(BaseAIS):
         sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z))
         sum_log_alpha = torch.zeros_like(z[:, 0])
         z_transformed = z
-        if_stop_grad = False if (
-                inference_part or (self.grads_through_alphas and not hasattr(self, 'cloned_decoder'))) else True
         for i in range(1, self.K + 1):
-            with Stop_grads(if_stop_grad):
+            with Stop_grads((not inference_part) and self.use_cloned_decoder):
                 z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
                                                                                     z=z_transformed,
                                                                                     x=x,
@@ -449,7 +445,8 @@ class AIS_VAE(BaseAIS):
                                                                                         beta=self.beta[i]))
                 sum_log_alpha += current_log_alphas
             sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
-                    self.joint_logdensity(use_true_decoder=True)(z=z_transformed, x=x) - init_logdens(z=z_transformed))
+                    self.joint_logdensity(use_true_decoder=(i == self.K))(z=z_transformed, x=x) - init_logdens(
+                z=z_transformed))
             all_acceptance = torch.cat([all_acceptance, directions[None]])
 
         self.update_stepsize(all_acceptance.mean(1))
@@ -480,13 +477,13 @@ class AIS_VAE(BaseAIS):
             self.moving_averages[0] = 0.9 * self.moving_averages[0] + 0.1 * torch.mean(
                 sum_log_alpha.view((self.num_samples, batch_size)).sum(0).detach())
             self.moving_averages[1] = 0.9 * self.moving_averages[1] + 0.1 * torch.mean(elbo_est.detach())
-        if inference_part:
+        if (not inference_part) and self.use_cloned_decoder:
+            loss = -torch.mean(elbo_est)
+            return loss
+        else:
             loss = -(torch.mean(elbo_est) + torch.mean(
                 (elbo_est.detach() - self.moving_averages[1]) * (
                         sum_log_alpha.view((self.num_samples, batch_size)).sum(0) - self.moving_averages[0])))
-            return loss
-        else:
-            loss = -torch.mean(elbo_est)
             return loss
 
     def training_step(self, batch, batch_idx, optimizer_idx):
@@ -539,11 +536,121 @@ class AIS_VAE(BaseAIS):
             loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
                                       inference_part=True)
             self.manual_backward(loss, opt_encoder_flows)
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                list(self.encoder_net.parameters()) + list(self.transitions.parameters()),
-                self.grad_clip_val).item()
+            inf_params = list(self.encoder_net.parameters()) + list(self.transitions.parameters())
+            if self.use_cloned_decoder:
+                inf_params += list(self.cloned_decoder.parameters())
+            grad_norm = torch.nn.utils.clip_grad_norm_(inf_params, self.grad_clip_val).item()
             if grad_norm < self.grad_skip_val:
                 opt_encoder_flows.step()
+            return
+
+
+class AIS_VAE_S(AIS_VAE):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.save_hyperparameters()
+
+    def configure_optimizers(self):
+        params = list(self.decoder_net.parameters()) + list(self.encoder_net.parameters()) + list(
+            self.transitions.parameters())
+        ## If we are using cloned decoder to approximate the true one, we add its params to inference optimizer
+        if self.use_cloned_decoder:
+            params += list(self.cloned_decoder.parameters())
+        optimizer = torch.optim.Adam(params, lr=1e-3, eps=1e-4)
+        return [optimizer]
+
+    def specific_transitions(self, z, x, init_logdens, annealing_logdens, inference_part=True):
+        all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
+        sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdens(z))
+        sum_log_alpha = torch.zeros_like(z[:, 0])
+        z_transformed = z
+        for i in range(1, self.K + 1):
+            z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
+                                                                                z=z_transformed,
+                                                                                x=x,
+                                                                                annealing_logdens=annealing_logdens(
+                                                                                    beta=self.beta[i]))
+            sum_log_alpha += current_log_alphas
+            sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
+                    self.joint_logdensity(use_true_decoder=(i == self.K))(z=z_transformed, x=x) - init_logdens(
+                z=z_transformed))
+            all_acceptance = torch.cat([all_acceptance, directions[None]])
+
+        self.update_stepsize(all_acceptance.mean(1))
+        return z_transformed, sum_log_weights, sum_log_alpha, all_acceptance
+
+    def step(self, batch):
+        x, _ = batch
+        z, mu, logvar = self.enc_rep(x, self.num_samples)
+        x = repeat_data(x, self.num_samples)
+        z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
+                                                                                             x=x,
+                                                                                             mu=mu,
+                                                                                             logvar=logvar,
+                                                                                             inference_part=True)
+
+        loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights)
+        return loss, all_acceptance, z_transformed
+
+    def validation_step(self, batch, batch_idx):
+        output = self.step(batch)
+        d = {"val_loss": output[0], "acceptance_rate": output[1].mean(1)}
+        if self.current_epoch == 29:
+            nll = self.evaluate_nll(batch=batch,
+                                    beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
+            d.update({"nll": nll})
+        return d
+
+    def loss_function(self, sum_log_alpha, sum_log_weights):
+        batch_size = sum_log_weights.shape[0] // self.num_samples
+        elbo_est = sum_log_weights.view((self.num_samples, batch_size)).sum(0)
+        if len(self.moving_averages) == 0:
+            self.moving_averages.append(torch.mean(sum_log_alpha.view((self.num_samples, batch_size)).sum(0).detach()))
+            self.moving_averages.append(torch.mean(elbo_est.detach()))
+        else:
+            self.moving_averages[0] = 0.9 * self.moving_averages[0] + 0.1 * torch.mean(
+                sum_log_alpha.view((self.num_samples, batch_size)).sum(0).detach())
+            self.moving_averages[1] = 0.9 * self.moving_averages[1] + 0.1 * torch.mean(elbo_est.detach())
+        loss = -(torch.mean(elbo_est) + torch.mean(
+            (elbo_est.detach() - self.moving_averages[1]) * (
+                    sum_log_alpha.view((self.num_samples, batch_size)).sum(0) - self.moving_averages[0])))
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        x, _ = batch
+        if self.grad_skip_val == 0.:
+            inference_part = True
+            z, mu, logvar = self.enc_rep(x, self.num_samples)
+
+            x = repeat_data(x, self.num_samples)
+            z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
+                                                                                                 x=x,
+                                                                                                 mu=mu,
+                                                                                                 logvar=logvar,
+                                                                                                 inference_part=inference_part)
+            loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights)
+            return {"loss": loss}
+        else:
+            optimizer = self.optimizers()
+
+            ## decoder
+            z, mu, logvar = self.enc_rep(x, self.num_samples)
+            x_ = repeat_data(x, self.num_samples)
+            z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
+                                                                                                 x=x_,
+                                                                                                 mu=mu,
+                                                                                                 logvar=logvar,
+                                                                                                 inference_part=True)
+            loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights)
+            self.manual_backward(loss, optimizer)
+            params = list(self.decoder_net.parameters()) + list(self.encoder_net.parameters()) + list(
+                self.transitions.parameters())
+            ## If we are using cloned decoder to approximate the true one, we add its params to inference optimizer
+            if self.use_cloned_decoder:
+                params += list(self.cloned_decoder.parameters())
+            grad_norm = torch.nn.utils.clip_grad_norm_(params, self.grad_clip_val).item()
+            if grad_norm < self.grad_skip_val:
+                optimizer.step()
             return
 
 
