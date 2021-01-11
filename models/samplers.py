@@ -26,9 +26,9 @@ def acceptance_ratio(log_t, log_1_t, use_barker):
 def compute_grad(z, target, x):
     flag = z.requires_grad  # True, if requires grad (means that we propagate gradients to some parameters)
     if not flag:
-        z_ = z.detach().clone().requires_grad_(True)
+        z_ = z.detach().requires_grad_(True)
     else:
-        z_ = z.clone().requires_grad_(True)
+        z_ = z.requires_grad_(True)  ##  Do I need to clone it?
     with torch.enable_grad():
         grad = _get_grad(z=z_, target=target, x=x)
         if not flag:
@@ -245,11 +245,13 @@ class ULA(nn.Module):
             z_new = z_old + update
             eps_reverse = (z_old - z_new - self.step_size * self.get_grad(z=z_new, target=target, x=x)) / torch.sqrt(
                 2 * self.step_size)
+            score_match_cur = add
         else:
             add = self.add_nn(z=z_old, x=x)
             z_new = z_old + self.step_size * add + torch.sqrt(2 * self.step_size) * eps
             eps_reverse = (z_old - z_new - self.step_size * self.add_nn(z=z_new, x=x)) / torch.sqrt(2 * self.step_size)
-        return z_new, eps, eps_reverse, (add - self.get_grad(z=z_old, target=target, x=x)) ** 2
+            score_match_cur = (add - self.get_grad(z=z_old, target=target, x=x)) ** 2
+        return z_new, eps, eps_reverse, score_match_cur
 
     def scale_transform(self, z, sign='+'):
         S = torch.sigmoid(self.scale_nn(z))

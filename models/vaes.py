@@ -4,13 +4,21 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torchvision
 
 from models.aux import ULA_nn_sm
 from models.decoders import get_decoder
 from models.encoders import get_encoder
 from models.samplers import HMC, MALA, ULA
+
+
+def binary_crossentropy_logits_stable(x, y):
+    '''
+    Special binary crossentropy where y can be a single data batch, while
+    x has several repeats
+    '''
+    # return (1. - y)* x + torch.log(1.+torch.exp(-x))
+    return torch.clamp(x, 0) - x * y + torch.log(1 + torch.exp(-torch.abs(x)))
 
 
 def repeat_data(x, n_samples):
@@ -112,9 +120,11 @@ class Base(pl.LightningModule):
             log_Pr = torch.distributions.Normal(loc=torch.tensor(0., device=x.device, dtype=torch.float32),
                                                 scale=torch.tensor(1., device=x.device, dtype=torch.float32)).log_prob(
                 z).sum(-1)
-            return -F.binary_cross_entropy_with_logits(x_reconst.view(x_reconst.shape[0], -1),
-                                                       x.view(x_reconst.shape[0], -1), reduction='none').sum(
-                -1) + log_Pr
+            # return -F.binary_cross_entropy_with_logits(x_reconst.view(x_reconst.shape[0], -1),
+            #                                            x.view(x_reconst.shape[0], -1), reduction='none').sum(
+            #     -1) + log_Pr
+            return -binary_crossentropy_logits_stable(x_reconst.view(x_reconst.shape[0], -1),
+                                                      x.view(x_reconst.shape[0], -1)).sum(-1) + log_Pr
 
         return density
 
@@ -209,8 +219,10 @@ class Base(pl.LightningModule):
 class VAE(Base):
     def loss_function(self, recon_x, x, mu, logvar):
         batch_size = mu.shape[0] // self.num_samples
-        BCE = F.binary_cross_entropy_with_logits(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
-                                                 reduction='none').view(
+        # BCE = F.binary_cross_entropy_with_logits(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
+        #                                          reduction='none').view(
+        #     (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
+        BCE = binary_crossentropy_logits_stable(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).view(
             (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
         KLD = -0.5 * torch.mean((1 + logvar - mu.pow(2) - logvar.exp()).view(
             (self.num_samples, -1, self.hidden_dim)).mean(0).sum(-1))
@@ -233,8 +245,10 @@ class IWAE(Base):
             (self.num_samples, -1, self.hidden_dim)).sum(-1)
 
         log_Pr = torch.sum((-0.5 * z ** 2).view((self.num_samples, -1, self.hidden_dim)), -1)
-        BCE = F.binary_cross_entropy_with_logits(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
-                                                 reduction='none').view(
+        # BCE = F.binary_cross_entropy_with_logits(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
+        #                                          reduction='none').view(
+        #     (self.num_samples, batch_size, -1)).sum(-1)
+        BCE = binary_crossentropy_logits_stable(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).view(
             (self.num_samples, batch_size, -1)).sum(-1)
         log_weight = log_Pr - BCE - log_Q
         log_weight = log_weight - torch.max(log_weight, 0)[0]  # for stability
@@ -336,7 +350,7 @@ class BaseAIS(Base):
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
         d = {"val_loss_enc": output[0], "val_loss_dec": output[1], "acceptance_rate": output[2].mean(1)}
-        if self.current_epoch == 29:
+        if self.current_epoch == 49:
             nll = self.evaluate_nll(batch=batch,
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
@@ -397,8 +411,9 @@ class AIWAE(BaseAIS):
     def loss_function(self, z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part):
         batch_size = mu.shape[0] // self.num_samples
         if inference_part:
-            BCE = F.binary_cross_entropy_with_logits(x_hat.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
-                                                     reduction='none').sum(-1).mean()
+            # BCE = F.binary_cross_entropy_with_logits(x_hat.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
+            #                                          reduction='none').sum(-1).mean()
+            BCE = binary_crossentropy_logits_stable(x_hat.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).sum(-1).mean()
             KLD = -0.5 * torch.mean((1 + logvar - mu.pow(2) - logvar.exp()).sum(-1))
             loss = BCE + KLD
         else:
@@ -413,10 +428,11 @@ class AIWAE(BaseAIS):
 
 
 class AIS_VAE(BaseAIS):
-    def __init__(self, use_barker, **kwargs):
+    def __init__(self, use_barker, learnable_transitions=False, **kwargs):
         super().__init__(**kwargs)
+        self.learnable_transitions = learnable_transitions
         self.transitions = nn.ModuleList(
-            [MALA(step_size=self.epsilons[0], use_barker=use_barker, learnable=False)
+            [MALA(step_size=self.epsilons[0], use_barker=use_barker, learnable=learnable_transitions)
              for _ in range(self.K)])
         self.save_hyperparameters()
         self.moving_averages = []
@@ -444,6 +460,7 @@ class AIS_VAE(BaseAIS):
                                                                                     annealing_logdens=annealing_logdens(
                                                                                         beta=self.beta[i]))
                 sum_log_alpha += current_log_alphas
+
             sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
                     self.joint_logdensity(use_true_decoder=(i == self.K))(z=z_transformed, x=x) - init_logdens(
                 z=z_transformed))
@@ -505,28 +522,7 @@ class AIS_VAE(BaseAIS):
         else:
             (opt_decoder, opt_encoder_flows) = self.optimizers()
 
-            ## decoder
-            with Stop_grads(True):
-                z, mu, logvar = self.enc_rep(x, self.num_samples)
-
-            x_ = repeat_data(x, self.num_samples)
-            z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
-                                                                                                 x=x_,
-                                                                                                 mu=mu,
-                                                                                                 logvar=logvar,
-                                                                                                 inference_part=False)
-            loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
-                                      inference_part=False)
-            self.manual_backward(loss, opt_decoder)
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.decoder_net.parameters(), self.grad_clip_val).item()
-            if grad_norm < self.grad_skip_val:
-                opt_decoder.step()
-
-            ## encoder and flows
-            with Stop_grads(False):
-                z, mu, logvar = self.enc_rep(x, self.num_samples)
-
+            z, mu, logvar = self.enc_rep(x, self.num_samples)
             x_ = repeat_data(x, self.num_samples)
             z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
                                                                                                  x=x_,
@@ -535,6 +531,14 @@ class AIS_VAE(BaseAIS):
                                                                                                  inference_part=True)
             loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
                                       inference_part=True)
+            ## decoder
+            self.manual_backward(loss, opt_decoder, retain_graph=True)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.decoder_net.parameters(), self.grad_clip_val).item()
+            if grad_norm < self.grad_skip_val:
+                opt_decoder.step()
+
+            ## encoder and flows
             self.manual_backward(loss, opt_encoder_flows)
             inf_params = list(self.encoder_net.parameters()) + list(self.transitions.parameters())
             if self.use_cloned_decoder:
@@ -595,7 +599,7 @@ class AIS_VAE_S(AIS_VAE):
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
         d = {"val_loss": output[0], "acceptance_rate": output[1].mean(1)}
-        if self.current_epoch == 29:
+        if self.current_epoch == 49:
             nll = self.evaluate_nll(batch=batch,
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
@@ -655,8 +659,9 @@ class AIS_VAE_S(AIS_VAE):
 
 
 class ULA_VAE(BaseAIS):
-    def __init__(self, use_transforms=False, **kwargs):
+    def __init__(self, use_transforms=False, learnable_transitions=False, **kwargs):
         super().__init__(**kwargs)
+        self.learnable_transitions = learnable_transitions
         if use_transforms:
             # if kwargs['score_matching']: to write it better
             additional_dims = 2 if kwargs['dataset'] == 'toy' else kwargs['shape'] ** 2
@@ -667,26 +672,21 @@ class ULA_VAE(BaseAIS):
         else:
             transforms = None
         self.transitions = nn.ModuleList(
-            [ULA(step_size=self.epsilons[0], learnable=False, transforms=transforms)
+            [ULA(step_size=self.epsilons[0], learnable=self.learnable_transitions, transforms=transforms)
              for _ in range(self.K)])
         self.save_hyperparameters()
         self.score_matching = use_transforms
 
     def configure_optimizers(self):
-        lambda_lr = lambda epoch: 10 ** (-epoch / 7.0)
         decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-5)
-        decoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(decoder_optimizer, lambda_lr)
-
         encoder_optimizer = torch.optim.Adam(list(self.encoder_net.parameters()),
                                              lr=1e-4, eps=1e-5)
-        encoder_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(encoder_optimizer, lambda_lr)
+        optimizers_list = [decoder_optimizer, encoder_optimizer]
+        if self.score_matching:
+            score_matching_optimizer = torch.optim.Adam(self.transitions.parameters(), lr=1e-4, eps=1e-4)
+            optimizers_list.append(score_matching_optimizer)
 
-        score_matching_optimizer = torch.optim.Adam(self.transitions.parameters(), lr=1e-4, eps=1e-4)
-        score_matching_scheduler_lr = torch.optim.lr_scheduler.LambdaLR(score_matching_optimizer, lambda_lr)
-
-        return [decoder_optimizer, encoder_optimizer, score_matching_optimizer], [decoder_scheduler_lr,
-                                                                                  encoder_scheduler_lr,
-                                                                                  score_matching_scheduler_lr]
+        return optimizers_list
 
     def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
         if nll:
@@ -752,7 +752,6 @@ class ULA_VAE(BaseAIS):
                                                                                        mu=mu,
                                                                                        logvar=logvar,
                                                                                        inference_part=inference_part)
-
         if optimizer_idx == 2:
             loss = loss_sm.sum(1).mean()
         else:
@@ -763,7 +762,7 @@ class ULA_VAE(BaseAIS):
         output = self.step(batch)
         d = {"val_loss_enc": output[0], "val_loss_dec": output[1], "acceptance_rate": output[2].mean(1),
              "val_loss_score_match": output[3]}
-        if (self.current_epoch == 29):
+        if (self.current_epoch == 49):
             nll = self.evaluate_nll(batch=batch,
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
@@ -818,7 +817,7 @@ class Stacked_VAE(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         d = self.current_model.validation_step(batch, batch_idx)
-        if (self.current_epoch == 29):
+        if (self.current_epoch == 49):
             nll = self.current_model.evaluate_nll(batch=batch,
                                                   beta=torch.linspace(0., 1., 5, device=batch[0].device,
                                                                       dtype=torch.float32))
