@@ -9,6 +9,7 @@ import torchvision
 from models.aux import ULA_nn_sm
 from models.decoders import get_decoder
 from models.encoders import get_encoder
+from models.normflows import NormFlow
 from models.samplers import HMC, MALA, ULA
 
 
@@ -268,6 +269,37 @@ class IWAE(Base):
         return loss, x_hat, z
 
 
+class VAE_with_flows(Base):
+    def __init__(self, flow_type, num_flows, need_permute, **kwargs):
+        super().__init__(**kwargs)
+        self.Flow = NormFlow(flow_type, num_flows, self.hidden_dim, need_permute)
+        self.save_hyperparameters()
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=1e-3)
+
+    def loss_function(self, recon_x, x, mu, logvar, z, z_transformed, log_jac):
+        batch_size = mu.shape[0] // self.num_samples
+        BCE = binary_crossentropy_logits_stable(recon_x, x.view(mu.shape[0], -1)).view(
+            (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
+        log_Q = torch.mean(torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(z).view(
+            (self.num_samples, batch_size, -1)).sum(-1) - log_jac.view((self.num_samples, -1)), dim=0).mean()
+        log_Pr = (-0.5 * z_transformed ** 2).view(
+            (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
+        KLD = torch.mean(log_Q - log_Pr).mean(0)
+        loss = BCE + KLD
+        return loss
+
+    def step(self, batch):
+        x, _ = batch
+        z, mu, logvar = self.enc_rep(x, self.num_samples)
+        x = repeat_data(x, self.num_samples)
+        z_transformed, log_jac = self.Flow(z)
+        x_hat = self(z_transformed)
+        loss = self.loss_function(x_hat, x, mu, logvar, z, z_transformed, log_jac)
+        return loss, x_hat, z_transformed
+
+
 class BaseAIS(Base):
     def __init__(self, step_size, K, beta=None, grad_skip_val=0., grad_clip_val=0., use_cloned_decoder=False, **kwargs):
         super().__init__(**kwargs)
@@ -453,7 +485,7 @@ class AIS_VAE(BaseAIS):
         sum_log_alpha = torch.zeros_like(z[:, 0])
         z_transformed = z
         for i in range(1, self.K + 1):
-            with Stop_grads((not inference_part) and self.use_cloned_decoder):
+            with Stop_grads((not inference_part) and self.use_cloned_decoder): #######
                 z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
                                                                                     z=z_transformed,
                                                                                     x=x,
@@ -672,18 +704,27 @@ class ULA_VAE(BaseAIS):
         else:
             transforms = None
         self.transitions = nn.ModuleList(
-            [ULA(step_size=self.epsilons[0], learnable=self.learnable_transitions, transforms=transforms)
+            [ULA(step_size=self.epsilons[0], learnable=self.learnable_transitions, transforms=transforms,
+                 return_pre_alphas=True)
              for _ in range(self.K)])
         self.save_hyperparameters()
         self.score_matching = use_transforms
 
     def configure_optimizers(self):
-        decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-5)
-        encoder_optimizer = torch.optim.Adam(list(self.encoder_net.parameters()),
-                                             lr=1e-4, eps=1e-5)
-        optimizers_list = [decoder_optimizer, encoder_optimizer]
+        inference_params = list(self.encoder_net.parameters())
+        score_matching_optimizer = None
+        if self.use_cloned_decoder:
+            inference_params += list(self.cloned_decoder.parameters())
+
         if self.score_matching:
             score_matching_optimizer = torch.optim.Adam(self.transitions.parameters(), lr=1e-4, eps=1e-4)
+        else:
+            inference_params += list(self.transitions.parameters())
+
+        decoder_optimizer = torch.optim.Adam(self.decoder_net.parameters(), lr=1e-3, eps=1e-5)
+        encoder_optimizer = torch.optim.Adam(inference_params, lr=1e-3, eps=1e-4)
+        optimizers_list = [decoder_optimizer, encoder_optimizer]
+        if score_matching_optimizer is not None:
             optimizers_list.append(score_matching_optimizer)
 
         return optimizers_list
@@ -735,6 +776,8 @@ class ULA_VAE(BaseAIS):
         return loss_enc, loss_dec, all_acceptance, loss_sm, z_transformed
 
     def loss_function(self, sum_log_weights):
+        # import pdb
+        # pdb.set_trace()
         batch_size = sum_log_weights.shape[0] // self.num_samples
         elbo_est = sum_log_weights.view((self.num_samples, batch_size)).sum(0)
         loss = -torch.mean(elbo_est)

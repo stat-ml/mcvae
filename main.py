@@ -95,7 +95,7 @@ if __name__ == '__main__':
     else:
         raise ValueError
 
-    automatic_optimization = True  # args.grad_skip_val == 0.
+    automatic_optimization = False  # args.grad_skip_val == 0.
     args.gradient_clip_val = args.grad_clip_val
 
     trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, fast_dev_run=False,

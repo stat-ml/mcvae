@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-def acceptance_ratio(log_t, log_1_t, use_barker):
+def acceptance_ratio(log_t, log_1_t, use_barker, return_pre_alphas=False):
     if use_barker:
         current_log_alphas_pre = log_t - log_1_t
     else:
@@ -20,7 +20,10 @@ def acceptance_ratio(log_t, log_1_t, use_barker):
         current_log_alphas = current_log_alphas_pre
         current_log_alphas[~a] = corr_expression[~a]
 
-    return a, current_log_alphas
+    if not return_pre_alphas:
+        return a, current_log_alphas
+    else:
+        return a, current_log_alphas, current_log_alphas_pre
 
 
 def compute_grad(z, target, x):
@@ -208,13 +211,14 @@ class MALA(nn.Module):
 
 
 class ULA(nn.Module):
-    def __init__(self, step_size, learnable=False, transforms=None):
+    def __init__(self, step_size, learnable=False, transforms=None, return_pre_alphas=False):
         '''
         :param step_size: stepsize for leapfrog
         :param learnable: whether learnable (usage for Met model) or not
         '''
         super().__init__()
         self.learnable = learnable
+        self.return_pre_alphas = return_pre_alphas
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
         self.register_buffer('one', torch.tensor(1., dtype=torch.float32))
         self.log_stepsize = nn.Parameter(torch.log(torch.tensor(step_size, dtype=torch.float32)),
@@ -289,8 +293,21 @@ class ULA(nn.Module):
             log_1_t = torch.logsumexp(torch.cat([torch.zeros_like(log_t).view(-1, 1),
                                                  log_t.view(-1, 1)], dim=-1), dim=-1)  # log(1+t)
 
-            a, _ = acceptance_ratio(log_t, log_1_t, use_barker=False)
+            if self.return_pre_alphas:
+                a, _, current_log_alphas_pre = acceptance_ratio(log_t, log_1_t, use_barker=False,
+                                                                return_pre_alphas=self.return_pre_alphas)
+                acceptance_probs = torch.exp(current_log_alphas_pre)
+                reject_mask = acceptance_probs <= 5e-1
+            else:
+                a, _ = acceptance_ratio(log_t, log_1_t, use_barker=False, return_pre_alphas=self.return_pre_alphas)
+                reject_mask = torch.zeros_like(a) < -1.
         ###
+        if reject_mask.sum():
+            # z_new[reject_mask] = z[reject_mask]
+            z_new = torch.where(reject_mask[..., None], z, z_new)
+            proposal_density_numerator[reject_mask] = torch.zeros_like(proposal_density_numerator[reject_mask])
+            proposal_density_denominator[reject_mask] = torch.zeros_like(proposal_density_denominator[reject_mask])
+            score_match_cur[reject_mask] = torch.zeros_like(score_match_cur[reject_mask])
 
         return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a, score_match_cur
 
