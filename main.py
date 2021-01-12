@@ -85,7 +85,7 @@ if __name__ == '__main__':
                         num_samples=args.num_samples,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model, use_transforms=args.use_transforms,
-                        learnable_transitions=args.learnable_transitions)
+                        use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions)
     elif args.model == 'Stacked_VAE':
         model = Stacked_VAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
                             hidden_dim=args.hidden_dim,

@@ -485,13 +485,13 @@ class AIS_VAE(BaseAIS):
         sum_log_alpha = torch.zeros_like(z[:, 0])
         z_transformed = z
         for i in range(1, self.K + 1):
-            with Stop_grads(not inference_part):  # and self.use_cloned_decoder): #######
-                z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
-                                                                                    z=z_transformed,
-                                                                                    x=x,
-                                                                                    annealing_logdens=annealing_logdens(
-                                                                                        beta=self.beta[i]))
-                sum_log_alpha += current_log_alphas
+            # with Stop_grads(not inference_part):  # and self.use_cloned_decoder): ####### we dont need this anymore?
+            z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
+                                                                                z=z_transformed,
+                                                                                x=x,
+                                                                                annealing_logdens=annealing_logdens(
+                                                                                    beta=self.beta[i]))
+            sum_log_alpha += current_log_alphas
 
             sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
                     self.joint_logdensity(use_true_decoder=(i == self.K))(z=z_transformed, x=x) - init_logdens(
@@ -751,7 +751,7 @@ class ULA_VAE(BaseAIS):
         loss_sm = torch.zeros_like(z)
         z_transformed = z
         for i in range(1, self.K + 1):
-            with Stop_grads(not inference_part):
+            with Stop_grads(not inference_part):  ### but for ULA we need?
                 z_transformed, current_log_weights, directions, score_match_cur = self.one_transition(current_num=i - 1,
                                                                                                       z=z_transformed,
                                                                                                       x=x,
@@ -761,7 +761,7 @@ class ULA_VAE(BaseAIS):
             loss_sm += score_match_cur
             sum_log_weights += current_log_weights
             all_acceptance = torch.cat([all_acceptance, directions[None]])
-        sum_log_weights += self.joint_logdensity()(z=z_transformed, x=x)
+        sum_log_weights += self.joint_logdensity(use_true_decoder=True)(z=z_transformed, x=x)
         self.update_stepsize(all_acceptance.mean(1))
         return z_transformed, sum_log_weights, loss_sm, all_acceptance
 
