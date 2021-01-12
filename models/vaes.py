@@ -485,7 +485,7 @@ class AIS_VAE(BaseAIS):
         sum_log_alpha = torch.zeros_like(z[:, 0])
         z_transformed = z
         for i in range(1, self.K + 1):
-            with Stop_grads((not inference_part) and self.use_cloned_decoder): #######
+            with Stop_grads(not inference_part):  # and self.use_cloned_decoder): #######
                 z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
                                                                                     z=z_transformed,
                                                                                     x=x,
@@ -526,14 +526,11 @@ class AIS_VAE(BaseAIS):
             self.moving_averages[0] = 0.9 * self.moving_averages[0] + 0.1 * torch.mean(
                 sum_log_alpha.view((self.num_samples, batch_size)).sum(0).detach())
             self.moving_averages[1] = 0.9 * self.moving_averages[1] + 0.1 * torch.mean(elbo_est.detach())
-        if (not inference_part) and self.use_cloned_decoder:
-            loss = -torch.mean(elbo_est)
-            return loss
-        else:
-            loss = -(torch.mean(elbo_est) + torch.mean(
-                (elbo_est.detach() - self.moving_averages[1]) * (
-                        sum_log_alpha.view((self.num_samples, batch_size)).sum(0) - self.moving_averages[0])))
-            return loss
+
+        loss = -(torch.mean(elbo_est) + torch.mean(
+            (elbo_est.detach() - self.moving_averages[1]) * (
+                    sum_log_alpha.view((self.num_samples, batch_size)).sum(0) - self.moving_averages[0])))
+        return loss
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         x, _ = batch
@@ -550,12 +547,28 @@ class AIS_VAE(BaseAIS):
                                                                                                  inference_part=inference_part)
             loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
                                       inference_part=inference_part)
-            return {"loss": loss}
         else:
             (opt_decoder, opt_encoder_flows) = self.optimizers()
-
-            z, mu, logvar = self.enc_rep(x, self.num_samples)
+            ## decoder
+            with Stop_grads(True):
+                z, mu, logvar = self.enc_rep(x, self.num_samples)
             x_ = repeat_data(x, self.num_samples)
+            z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
+                                                                                                 x=x_,
+                                                                                                 mu=mu,
+                                                                                                 logvar=logvar,
+                                                                                                 inference_part=False)
+            loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
+                                      inference_part=False)
+            self.manual_backward(loss, opt_decoder)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.decoder_net.parameters(), self.grad_clip_val).item()
+            if grad_norm < self.grad_skip_val:
+                opt_decoder.step()
+
+            ## encoder and flows
+            with Stop_grads(False):
+                z, mu, logvar = self.enc_rep(x, self.num_samples)
             z_transformed, sum_log_weights, sum_log_alpha, all_acceptance = self.run_transitions(z=z,
                                                                                                  x=x_,
                                                                                                  mu=mu,
@@ -563,14 +576,6 @@ class AIS_VAE(BaseAIS):
                                                                                                  inference_part=True)
             loss = self.loss_function(sum_log_alpha=sum_log_alpha, sum_log_weights=sum_log_weights,
                                       inference_part=True)
-            ## decoder
-            self.manual_backward(loss, opt_decoder, retain_graph=True)
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.decoder_net.parameters(), self.grad_clip_val).item()
-            if grad_norm < self.grad_skip_val:
-                opt_decoder.step()
-
-            ## encoder and flows
             self.manual_backward(loss, opt_encoder_flows)
             inf_params = list(self.encoder_net.parameters()) + list(self.transitions.parameters())
             if self.use_cloned_decoder:
@@ -578,7 +583,7 @@ class AIS_VAE(BaseAIS):
             grad_norm = torch.nn.utils.clip_grad_norm_(inf_params, self.grad_clip_val).item()
             if grad_norm < self.grad_skip_val:
                 opt_encoder_flows.step()
-            return
+        return {"loss": loss}
 
 
 class AIS_VAE_S(AIS_VAE):
