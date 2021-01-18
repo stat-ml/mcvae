@@ -159,6 +159,12 @@ class Base(pl.LightningModule):
             self.logger.experiment.add_scalar(f'{self.dataset}/{self.name}/nll', nll,
                                               self.current_epoch)
 
+        if hasattr(self, 'transitions'):
+            for i in range(len(self.transitions)):
+                self.logger.experiment.add_scalar(f'{self.dataset}/{self.name}/median_step_size_{i}',
+                                                  np.median(self.transitions[i].step_size.cpu().detach().numpy()),
+                                                  self.current_epoch)
+
         if self.dataset.lower() in ['cifar', 'mnist', 'omniglot', 'celeba']:
             if self.dataset.lower().find('cifar') > -1:
                 x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 32, 32))
@@ -184,7 +190,7 @@ class Base(pl.LightningModule):
         output = self.step(batch)
         d = {"val_loss": output[0]}
         # TODO: Bypass self.current_epoch here or 'dataset'
-        if (self.current_epoch == 29):
+        if (self.current_epoch == 49):
             nll = self.evaluate_nll(batch=batch,
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
@@ -301,16 +307,28 @@ class VAE_with_flows(Base):
 
 
 class BaseAIS(Base):
-    def __init__(self, step_size, K, beta=None, grad_skip_val=0., grad_clip_val=0., use_cloned_decoder=False, **kwargs):
+    def __init__(self, step_size, K, beta=None, grad_skip_val=0., grad_clip_val=0., use_cloned_decoder=False,
+                 learnable_transitions=False, variance_sensitive_step=False, **kwargs):
         super().__init__(**kwargs)
         self.save_hyperparameters()
+        self.learnable_transitions = learnable_transitions
         self.K = K
+        self.variance_sensitive_step = variance_sensitive_step
+        if self.variance_sensitive_step:
+            self.gamma_0 = [1. for _ in range(self.K)]
         self.epsilons = [step_size for _ in range(self.K)]
         self.epsilon_target = 0.95
         self.epsilon_decrease_alpha = 0.998
         self.epsilon_increase_alpha = 1.002
         self.epsilon_min = 0.001
         self.epsilon_max = 0.3
+
+        # self.beta_0 = torch.nn.Parameter(torch.tensor(0., dtype=torch.float32),
+        #                                  requires_grad=self.learnable_transitions)
+        # if beta is None:
+        #     beta = (1. - 1. / (torch.sigmoid(self.beta_0.detach()) ** .5)) * np.linspace(0., 1.,
+        #                                                                                  self.K + 2) ** 2 + 1 / (
+        #                    torch.sigmoid(self.beta_0.detach()) ** .5)
         if beta is None:
             beta = torch.tensor(np.linspace(0., 1., self.K + 2), dtype=torch.float32)
         self.register_buffer('beta', beta)
@@ -354,20 +372,29 @@ class BaseAIS(Base):
 
         return output
 
-    def update_stepsize(self, accept_rate):
-        accept_rate = list(accept_rate.cpu().data.numpy())
-        for l in range(0, self.K - 1):
-            if accept_rate[l] < self.epsilon_target:
-                self.epsilons[l] *= self.epsilon_decrease_alpha
-            else:
-                self.epsilons[l] *= self.epsilon_increase_alpha
+    def update_stepsize(self, accept_rate=None, current_tran_id=None, current_gradient_batch=None):
+        if not self.variance_sensitive_step:
+            accept_rate = list(accept_rate.cpu().data.numpy())
+            for l in range(0, self.K):
+                if accept_rate[l] < self.epsilon_target:
+                    self.epsilons[l] *= self.epsilon_decrease_alpha
+                else:
+                    self.epsilons[l] *= self.epsilon_increase_alpha
 
-            if self.epsilons[l] < self.epsilon_min:
-                self.epsilons[l] = self.epsilon_min
-            if self.epsilons[l] > self.epsilon_max:
-                self.epsilons[l] = self.epsilon_max
-            self.transitions[l].log_stepsize.data = torch.tensor(np.log(self.epsilons[l]), dtype=torch.float32,
-                                                                 device=self.transitions[l].log_stepsize.device)
+                if self.epsilons[l] < self.epsilon_min:
+                    self.epsilons[l] = self.epsilon_min
+                if self.epsilons[l] > self.epsilon_max:
+                    self.epsilons[l] = self.epsilon_max
+                self.transitions[l].log_stepsize.data = torch.tensor(np.log(self.epsilons[l]), dtype=torch.float32,
+                                                                     device=self.transitions[l].log_stepsize.device)
+        elif self.variance_sensitive_step:
+            with torch.no_grad():
+                gradient_std = torch.std(current_gradient_batch, dim=0)
+                self.epsilons[current_tran_id] = 0.9 * self.epsilons[current_tran_id] + 0.1 * self.gamma_0[
+                    current_tran_id] / (gradient_std + 1.)
+                self.transitions[current_tran_id].log_stepsize.data = torch.log(self.epsilons[current_tran_id])
+        else:
+            raise ValueError
 
     def step(self, batch):
         x, _ = batch
@@ -460,11 +487,11 @@ class AIWAE(BaseAIS):
 
 
 class AIS_VAE(BaseAIS):
-    def __init__(self, use_barker, learnable_transitions=False, **kwargs):
+    def __init__(self, use_barker, **kwargs):
         super().__init__(**kwargs)
-        self.learnable_transitions = learnable_transitions
+        self.epsilon_target = 0.75
         self.transitions = nn.ModuleList(
-            [MALA(step_size=self.epsilons[0], use_barker=use_barker, learnable=learnable_transitions)
+            [MALA(step_size=self.epsilons[0], use_barker=use_barker, learnable=self.learnable_transitions)
              for _ in range(self.K)])
         self.save_hyperparameters()
         self.moving_averages = []
@@ -475,9 +502,10 @@ class AIS_VAE(BaseAIS):
                 z_new = self.transitions_nll[current_num].make_transition(z=z, x=x, target=annealing_logdens)
             return z_new
         else:
-            z_new, directions, current_log_alphas = self.transitions[current_num].make_transition(z=z, x=x,
-                                                                                                  target=annealing_logdens)
-            return z_new, current_log_alphas, directions
+            z_new, directions, current_log_alphas, forward_grad = self.transitions[current_num].make_transition(z=z,
+                                                                                                                x=x,
+                                                                                                                target=annealing_logdens)
+            return z_new, current_log_alphas, directions, forward_grad
 
     def specific_transitions(self, z, x, init_logdens, annealing_logdens, inference_part=False):
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
@@ -486,19 +514,22 @@ class AIS_VAE(BaseAIS):
         z_transformed = z
         for i in range(1, self.K + 1):
             # with Stop_grads(not inference_part):  # and self.use_cloned_decoder): ####### we dont need this anymore?
-            z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
-                                                                                z=z_transformed,
-                                                                                x=x,
-                                                                                annealing_logdens=annealing_logdens(
-                                                                                    beta=self.beta[i]))
+            z_tranformed, current_log_alphas, directions, forward_grad = self.one_transition(current_num=i - 1,
+                                                                                             z=z_transformed,
+                                                                                             x=x,
+                                                                                             annealing_logdens=annealing_logdens(
+                                                                                                 beta=self.beta[i]))
             sum_log_alpha += current_log_alphas
 
             sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
                     self.joint_logdensity(use_true_decoder=(i == self.K))(z=z_transformed, x=x) - init_logdens(
                 z=z_transformed))
             all_acceptance = torch.cat([all_acceptance, directions[None]])
+            if self.variance_sensitive_step:
+                self.update_stepsize(current_tran_id=i - 1, current_gradient_batch=forward_grad)
 
-        self.update_stepsize(all_acceptance.mean(1))
+        if not self.variance_sensitive_step:
+            self.update_stepsize(accept_rate=all_acceptance.mean(1))
         return z_transformed, sum_log_weights, sum_log_alpha, all_acceptance
 
     def step(self, batch):
@@ -696,9 +727,8 @@ class AIS_VAE_S(AIS_VAE):
 
 
 class ULA_VAE(BaseAIS):
-    def __init__(self, use_transforms=False, learnable_transitions=False, **kwargs):
+    def __init__(self, use_transforms=False, **kwargs):
         super().__init__(**kwargs)
-        self.learnable_transitions = learnable_transitions
         if use_transforms:
             # if kwargs['score_matching']: to write it better
             additional_dims = 2 if kwargs['dataset'] == 'toy' else kwargs['shape'] ** 2
@@ -740,10 +770,11 @@ class ULA_VAE(BaseAIS):
                                                                       target=annealing_logdens)
             return z_new
         else:
-            z_new, current_log_weights, directions, score_match_cur = self.transitions[current_num].make_transition(z=z,
-                                                                                                                    x=x,
-                                                                                                                    target=annealing_logdens)
-            return z_new, current_log_weights, directions, score_match_cur
+            z_new, current_log_weights, directions, score_match_cur, forward_grad = self.transitions[
+                current_num].make_transition(z=z,
+                                             x=x,
+                                             target=annealing_logdens)
+            return z_new, current_log_weights, directions, score_match_cur, forward_grad
 
     def specific_transitions(self, z, x, init_logdens, annealing_logdens, inference_part=False):
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
@@ -752,17 +783,21 @@ class ULA_VAE(BaseAIS):
         z_transformed = z
         for i in range(1, self.K + 1):
             with Stop_grads(not inference_part):  ### but for ULA we need?
-                z_transformed, current_log_weights, directions, score_match_cur = self.one_transition(current_num=i - 1,
-                                                                                                      z=z_transformed,
-                                                                                                      x=x,
-                                                                                                      annealing_logdens=annealing_logdens(
-                                                                                                          beta=
-                                                                                                          self.beta[i]))
+                z_transformed, current_log_weights, directions, score_match_cur, forward_grad = self.one_transition(
+                    current_num=i - 1,
+                    z=z_transformed,
+                    x=x,
+                    annealing_logdens=annealing_logdens(
+                        beta=
+                        self.beta[i]))
             loss_sm += score_match_cur
             sum_log_weights += current_log_weights
             all_acceptance = torch.cat([all_acceptance, directions[None]])
+            if self.variance_sensitive_step:
+                self.update_stepsize(current_tran_id=i - 1, current_gradient_batch=forward_grad)
         sum_log_weights += self.joint_logdensity(use_true_decoder=True)(z=z_transformed, x=x)
-        self.update_stepsize(all_acceptance.mean(1))
+        if not self.variance_sensitive_step:
+            self.update_stepsize(accept_rate=all_acceptance.mean(1))
         return z_transformed, sum_log_weights, loss_sm, all_acceptance
 
     def step(self, batch):

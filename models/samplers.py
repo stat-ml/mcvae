@@ -151,6 +151,7 @@ class MALA(nn.Module):
         :param learnable: whether learnable (usage for Met model) or not
         '''
         super().__init__()
+        self.noise_multiplier = 1.
         self.use_barker = use_barker
         self.learnable = learnable
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
@@ -164,10 +165,11 @@ class MALA(nn.Module):
 
     def _forward_step(self, z_old, x=None, target=None):
         eps = torch.randn_like(z_old)
-        update = torch.sqrt(2 * self.step_size) * eps + self.step_size * self.get_grad(z=z_old,
-                                                                                       target=target,
-                                                                                       x=x)
-        return z_old + update, update, eps
+        forward_grad = self.get_grad(z=z_old,
+                                     target=target,
+                                     x=x)
+        update = torch.sqrt(2 * self.step_size) * eps * self.noise_multiplier + self.step_size * forward_grad
+        return z_old + update, update, eps, forward_grad
 
     def make_transition(self, z, target, x=None):
         """
@@ -183,13 +185,13 @@ class MALA(nn.Module):
         ############ Then we compute new points and densities ############
         std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
 
-        z_upd, update, eps = self._forward_step(z_old=z, x=x, target=target)
+        z_upd, update, eps, forward_grad = self._forward_step(z_old=z, x=x, target=target)
 
         target_log_density_upd = target(z=z_upd, x=x)
         target_log_density_old = target(z=z, x=x)
 
-        eps_reverse = (-update - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / torch.sqrt(
-            2 * self.step_size)
+        eps_reverse = (-update - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / (torch.sqrt(
+            2 * self.step_size) * self.noise_multiplier)
         proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
 
@@ -203,7 +205,7 @@ class MALA(nn.Module):
         z_new[a] = z_upd[a]
         z_new[~a] = z[~a]
 
-        return z_new, a.to(torch.float32), current_log_alphas
+        return z_new, a.to(torch.float32), current_log_alphas, forward_grad
 
     def get_grad(self, z, target, x=None):
         grad = compute_grad(z, target, x)
@@ -217,6 +219,7 @@ class ULA(nn.Module):
         :param learnable: whether learnable (usage for Met model) or not
         '''
         super().__init__()
+        self.noise_multiplier = 1.
         self.learnable = learnable
         self.return_pre_alphas = return_pre_alphas
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
@@ -243,19 +246,22 @@ class ULA(nn.Module):
         self.log_jac = torch.zeros_like(z_old[:, 0])
         if not self.transforms:
             add = torch.zeros_like(z_old)
-            update = torch.sqrt(2 * self.step_size) * eps + self.step_size * self.get_grad(z=z_old,
-                                                                                           target=target,
-                                                                                           x=x)
+            forward_grad = self.get_grad(
+                z=z_old,
+                target=target,
+                x=x)
+            update = torch.sqrt(2 * self.step_size) * eps * self.noise_multiplier + self.step_size * forward_grad
             z_new = z_old + update
-            eps_reverse = (z_old - z_new - self.step_size * self.get_grad(z=z_new, target=target, x=x)) / torch.sqrt(
-                2 * self.step_size)
+            eps_reverse = (z_old - z_new - self.step_size * self.get_grad(z=z_new, target=target, x=x)) / (torch.sqrt(
+                2 * self.step_size) * self.noise_multiplier)
             score_match_cur = add
         else:
             add = self.add_nn(z=z_old, x=x)
             z_new = z_old + self.step_size * add + torch.sqrt(2 * self.step_size) * eps
             eps_reverse = (z_old - z_new - self.step_size * self.add_nn(z=z_new, x=x)) / torch.sqrt(2 * self.step_size)
             score_match_cur = (add - self.get_grad(z=z_old, target=target, x=x)) ** 2
-        return z_new, eps, eps_reverse, score_match_cur
+            forward_grad = add
+        return z_new, eps, eps_reverse, score_match_cur, forward_grad
 
     def scale_transform(self, z, sign='+'):
         S = torch.sigmoid(self.scale_nn(z))
@@ -278,7 +284,7 @@ class ULA(nn.Module):
         ############ Then we compute new points and densities ############
         std_normal = torch.distributions.Normal(loc=self.zero, scale=self.one)
 
-        z_upd, eps, eps_reverse, score_match_cur = self._forward_step(z_old=z, x=x, target=target)
+        z_upd, eps, eps_reverse, score_match_cur, forward_grad = self._forward_step(z_old=z, x=x, target=target)
 
         proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
@@ -309,7 +315,7 @@ class ULA(nn.Module):
             proposal_density_denominator[reject_mask] = torch.zeros_like(proposal_density_denominator[reject_mask])
             score_match_cur[reject_mask] = torch.zeros_like(score_match_cur[reject_mask])
 
-        return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a, score_match_cur
+        return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a, score_match_cur, forward_grad
 
     def get_grad(self, z, target, x=None):
         grad = compute_grad(z, target, x)

@@ -38,6 +38,7 @@ if __name__ == '__main__':
     parser.add_argument("--use_transforms", type=str2bool, default=False)  # for ULA
     parser.add_argument("--use_cloned_decoder", type=str2bool, default=False)  # for AIS VAE
     parser.add_argument("--learnable_transitions", type=str2bool, default=False)  # for AIS VAE and ULA
+    parser.add_argument("--variance_sensitive_step", type=str2bool, default=False)  # for AIS VAE and ULA
 
     act_func = get_activations()
 
@@ -72,7 +73,8 @@ if __name__ == '__main__':
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
                         grad_clip_val=args.grad_clip_val,
-                        use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions)
+                        use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
+                        variance_sensitive_step=args.variance_sensitive_step)
     elif args.model == 'AIS_VAE_S':
         model = AIS_VAE_S(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
                           num_samples=args.num_samples,
@@ -85,7 +87,8 @@ if __name__ == '__main__':
                         num_samples=args.num_samples,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model, use_transforms=args.use_transforms,
-                        use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions)
+                        use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
+                        variance_sensitive_step=args.variance_sensitive_step)
     elif args.model == 'Stacked_VAE':
         model = Stacked_VAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
                             hidden_dim=args.hidden_dim,
