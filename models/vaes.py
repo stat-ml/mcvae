@@ -315,7 +315,7 @@ class BaseAIS(Base):
         self.K = K
         self.variance_sensitive_step = variance_sensitive_step
         if self.variance_sensitive_step:
-            self.gamma_0 = [1. for _ in range(self.K)]
+            self.gamma_0 = [0.1 for _ in range(self.K)]
         self.epsilons = [step_size for _ in range(self.K)]
         self.epsilon_target = 0.95
         self.epsilon_decrease_alpha = 0.998
@@ -393,6 +393,10 @@ class BaseAIS(Base):
                 self.epsilons[current_tran_id] = 0.9 * self.epsilons[current_tran_id] + 0.1 * self.gamma_0[
                     current_tran_id] / (gradient_std + 1.)
                 self.transitions[current_tran_id].log_stepsize.data = torch.log(self.epsilons[current_tran_id])
+                if accept_rate.mean() < self.epsilon_target:
+                    self.gamma_0[current_tran_id] *= 0.99
+                else:
+                    self.gamma_0[current_tran_id] *= 1.02
         else:
             raise ValueError
 
@@ -526,7 +530,7 @@ class AIS_VAE(BaseAIS):
                 z=z_transformed))
             all_acceptance = torch.cat([all_acceptance, directions[None]])
             if self.variance_sensitive_step:
-                self.update_stepsize(current_tran_id=i - 1, current_gradient_batch=forward_grad)
+                self.update_stepsize(accept_rate=directions, current_tran_id=i - 1, current_gradient_batch=forward_grad)
 
         if not self.variance_sensitive_step:
             self.update_stepsize(accept_rate=all_acceptance.mean(1))
@@ -794,7 +798,7 @@ class ULA_VAE(BaseAIS):
             sum_log_weights += current_log_weights
             all_acceptance = torch.cat([all_acceptance, directions[None]])
             if self.variance_sensitive_step:
-                self.update_stepsize(current_tran_id=i - 1, current_gradient_batch=forward_grad)
+                self.update_stepsize(accept_rate=directions, current_tran_id=i - 1, current_gradient_batch=forward_grad)
         sum_log_weights += self.joint_logdensity(use_true_decoder=True)(z=z_transformed, x=x)
         if not self.variance_sensitive_step:
             self.update_stepsize(accept_rate=all_acceptance.mean(1))

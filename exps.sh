@@ -35,7 +35,7 @@
 #python main.py --model AIS_VAE --dataset mnist --act_func gelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 5 --track_grad_norm 2 --grad_clip_val 10 --grad_skip_val 50 --use_cloned_decoder False
 #python main.py --model AIS_VAE --dataset mnist --act_func gelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 10 --track_grad_norm 2 --grad_clip_val 10 --grad_skip_val 50 --use_cloned_decoder False
 
-#python main.py --model AIS_VAE --dataset mnist --act_func gelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 1 --track_grad_norm 2 --grad_clip_val 10 --grad_skip_val 50 --use_cloned_decoder True
+python main.py --model AIS_VAE --dataset mnist --act_func gelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.1 --K 1 --learnable_transitions False --use_cloned_decoder False --variance_sensitive_step True --grad_clip_val 10 --grad_skip_val 50
 #python main.py --model AIS_VAE --dataset mnist --act_func gelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 3 --track_grad_norm 2 --grad_clip_val 10 --grad_skip_val 50 --use_cloned_decoder True
 #python main.py --model AIS_VAE --dataset mnist --act_func gelu --binarize True --use_barker False --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 5 --track_grad_norm 2 --grad_clip_val 10 --grad_skip_val 50 --use_cloned_decoder True
 #
@@ -55,7 +55,7 @@
 #python main.py --model ULA_VAE --dataset mnist --act_func gelu --binarize True --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 2 --use_transforms False --learnable_transitions False --use_cloned_decoder True
 #python main.py --model ULA_VAE --dataset mnist --act_func gelu --binarize True --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 3 --use_transforms False --learnable_transitions False --use_cloned_decoder True
 #
-python main.py --model ULA_VAE --dataset mnist --act_func gelu --binarize True --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 1 --use_transforms False --learnable_transitions False --use_cloned_decoder False --variance_sensitive_step True
+python main.py --model ULA_VAE --dataset mnist --act_func gelu --binarize True --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.1 --K 1 --use_transforms False --learnable_transitions False --use_cloned_decoder False --variance_sensitive_step True --grad_clip_val 10 --grad_skip_val 50
 #python main.py --model ULA_VAE --dataset mnist --act_func gelu --binarize True --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 2 --use_transforms False --learnable_transitions False --use_cloned_decoder False
 #python main.py --model ULA_VAE --dataset mnist --act_func gelu --binarize True --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 3 --use_transforms False --learnable_transitions False --use_cloned_decoder False
 #
