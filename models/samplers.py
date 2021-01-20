@@ -213,7 +213,7 @@ class MALA(nn.Module):
 
 
 class ULA(nn.Module):
-    def __init__(self, step_size, learnable=False, transforms=None, return_pre_alphas=False):
+    def __init__(self, step_size, learnable=False, transforms=None, ula_skip_threshold=0.0):
         '''
         :param step_size: stepsize for leapfrog
         :param learnable: whether learnable (usage for Met model) or not
@@ -221,7 +221,7 @@ class ULA(nn.Module):
         super().__init__()
         self.noise_multiplier = 1.
         self.learnable = learnable
-        self.return_pre_alphas = return_pre_alphas
+        self.ula_skip_threshold = ula_skip_threshold
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
         self.register_buffer('one', torch.tensor(1., dtype=torch.float32))
         self.log_stepsize = nn.Parameter(torch.log(torch.tensor(step_size, dtype=torch.float32)),
@@ -298,14 +298,15 @@ class ULA(nn.Module):
             log_t = target_log_density_upd + proposal_density_numerator - target_log_density_old - proposal_density_denominator + self.log_jac
             log_1_t = torch.logsumexp(torch.cat([torch.zeros_like(log_t).view(-1, 1),
                                                  log_t.view(-1, 1)], dim=-1), dim=-1)  # log(1+t)
-
-            if self.return_pre_alphas:
+            import pdb
+            pdb.set_trace()
+            if self.ula_skip_threshold > 0.:
                 a, _, current_log_alphas_pre = acceptance_ratio(log_t, log_1_t, use_barker=False,
-                                                                return_pre_alphas=self.return_pre_alphas)
+                                                                return_pre_alphas=True)
                 acceptance_probs = torch.exp(current_log_alphas_pre)
-                reject_mask = acceptance_probs <= 5e-1
+                reject_mask = acceptance_probs <= self.ula_skip_threshold
             else:
-                a, _ = acceptance_ratio(log_t, log_1_t, use_barker=False, return_pre_alphas=self.return_pre_alphas)
+                a, _ = acceptance_ratio(log_t, log_1_t, use_barker=False, return_pre_alphas=False)
                 reject_mask = torch.zeros_like(a) < -1.
         ###
         if reject_mask.sum():

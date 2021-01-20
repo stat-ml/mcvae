@@ -26,7 +26,7 @@ if __name__ == '__main__':
     ## Architecture
     parser.add_argument("--hidden_dim", default=64, type=int)
     parser.add_argument("--num_samples", default=1, type=int)
-    parser.add_argument("--act_func", default="leakyrelu",
+    parser.add_argument("--act_func", default="gelu",
                         choices=["relu", "leakyrelu", "tanh", "logsigmoid", "logsoftmax", "softplus", "gelu"])
     parser.add_argument("--net_type", choices=["fc", "conv"], type=str, default="conv")
 
@@ -34,6 +34,7 @@ if __name__ == '__main__':
     parser.add_argument("--K", type=int, default=3)
     parser.add_argument("--n_leapfrogs", type=int, default=3)
     parser.add_argument("--step_size", type=float, default=0.01)
+
     parser.add_argument("--use_barker", type=str2bool, default=False)
     parser.add_argument("--use_score_matching", type=str2bool, default=False)  # for ULA
     parser.add_argument("--use_cloned_decoder", type=str2bool,
@@ -42,6 +43,10 @@ if __name__ == '__main__':
                         default=False)  # for AIS VAE and ULA (if learn stepsize or not)
     parser.add_argument("--variance_sensitive_step", type=str2bool,
                         default=False)  # for AIS VAE and ULA (adapt stepsize based on dim's variance)
+    parser.add_argument("--ula_skip_threshold", type=float,
+                        default=0.0)  # Probability threshold, if below -- skip transition
+    parser.add_argument("--acceptance_rate_target", type=float,
+                        default=0.95)  # Probability threshold, if below -- skip transition
 
     act_func = get_activations()
 
@@ -72,7 +77,7 @@ if __name__ == '__main__':
                       name=args.model, net_type=args.net_type, dataset=args.dataset)
     elif args.model == 'AIS_VAE':
         model = AIS_VAE(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
-                        num_samples=args.num_samples,
+                        num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
                         grad_clip_val=args.grad_clip_val,
@@ -80,11 +85,13 @@ if __name__ == '__main__':
                         variance_sensitive_step=args.variance_sensitive_step)
     elif args.model == 'ULA_VAE':
         model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
-                        num_samples=args.num_samples,
+                        num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
-                        hidden_dim=args.hidden_dim, name=args.model, use_score_matching=args.use_score_matching,
+                        hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
+                        grad_clip_val=args.grad_clip_val, use_score_matching=args.use_score_matching,
                         use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
-                        variance_sensitive_step=args.variance_sensitive_step)
+                        variance_sensitive_step=args.variance_sensitive_step,
+                        ula_skip_threshold=args.ula_skip_threshold)
     elif args.model == 'Stacked_VAE':
         model = Stacked_VAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
                             hidden_dim=args.hidden_dim,

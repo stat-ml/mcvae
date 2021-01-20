@@ -67,8 +67,8 @@ class Base(pl.LightningModule):
     Base class for all VAEs
     '''
 
-    def __init__(self, num_samples, act_func, shape, hidden_dim=64, name="VAE", net_type="fc",
-                 dataset='mnist', **kwargs):
+    def __init__(self, num_samples, act_func, shape, hidden_dim, net_type,
+                 dataset, name="VAE", **kwargs):
         '''
 
         :param num_samples: how many latent samples per object to use
@@ -335,18 +335,19 @@ class BaseMCMC(Base):
     Base class for MCMC transition-based VAEs
     '''
 
-    def __init__(self, step_size, K, beta=None, grad_skip_val=0., grad_clip_val=0., use_cloned_decoder=False,
-                 learnable_transitions=False, variance_sensitive_step=False, **kwargs):
+    def __init__(self, step_size, K, grad_skip_val, grad_clip_val, use_cloned_decoder,
+                 learnable_transitions, variance_sensitive_step, acceptance_rate_target, beta=None, **kwargs):
         '''
 
         :param step_size: stepsize for transitions
         :param K: number of transitions
-        :param beta: List of annealing coefficients, some split of [0, 1] interval
         :param grad_skip_val: threshold for gradient norm to skip gradient update. Set to 0 if dont need it
         :param grad_clip_val: clip gradients to be no more than this value. Set to 0 if dont need it
         :param use_cloned_decoder: Flag, if true we use cloned version of decoder to simplify grads for decoder through alphas
         :param learnable_transitions: Flag, if true we train stepsize of transitions
         :param variance_sensitive_step: Flag, if true we adapt stepsize in a variance awared manner. If false, adapt it to match target acceptance rate
+        :param acceptance_rate_target: Target acceptance rate. Stepsize will be adjusted to fit it.
+        :param beta: List of annealing coefficients, some split of [0, 1] interval
         :param kwargs: specific arguments
         '''
         super().__init__(**kwargs)
@@ -357,7 +358,7 @@ class BaseMCMC(Base):
         if self.variance_sensitive_step:
             self.gamma_0 = [0.1 for _ in range(self.K)]  # an auxilary multipliers to adjust stepsize
         self.epsilons = [step_size for _ in range(self.K)]
-        self.epsilon_target = 0.95  # target acceptance rate
+        self.acceptance_rate_target = acceptance_rate_target  # target acceptance rate
         self.epsilon_decrease_alpha = 0.998
         self.epsilon_increase_alpha = 1.002
         self.epsilon_min = 0.001  # minimal possible stepsize
@@ -425,7 +426,7 @@ class BaseMCMC(Base):
         if not self.variance_sensitive_step:
             accept_rate = list(accept_rate.cpu().data.numpy())
             for l in range(0, self.K):
-                if accept_rate[l] < self.epsilon_target:
+                if accept_rate[l] < self.acceptance_rate_target:
                     self.epsilons[l] *= self.epsilon_decrease_alpha
                 else:
                     self.epsilons[l] *= self.epsilon_increase_alpha
@@ -442,7 +443,7 @@ class BaseMCMC(Base):
                 self.epsilons[current_tran_id] = 0.9 * self.epsilons[current_tran_id] + 0.1 * self.gamma_0[
                     current_tran_id] / (gradient_std + 1.)
                 self.transitions[current_tran_id].log_stepsize.data = torch.log(self.epsilons[current_tran_id])
-                if accept_rate.mean() < self.epsilon_target:
+                if accept_rate.mean() < self.acceptance_rate_target:
                     self.gamma_0[current_tran_id] *= 0.99
                 else:
                     self.gamma_0[current_tran_id] *= 1.02
@@ -550,7 +551,6 @@ class AIS_VAE(BaseMCMC):
         :param kwargs: Args for BaseMCMC class
         '''
         super().__init__(**kwargs)
-        self.epsilon_target = 0.75  # Epsilon target could be lower to encourage exploration
         self.transitions = nn.ModuleList(
             [MALA(step_size=self.epsilons[0], use_barker=use_barker, learnable=self.learnable_transitions)
              for _ in range(self.K)])
@@ -646,13 +646,11 @@ class AIS_VAE(BaseMCMC):
                                                                                               x=x,
                                                                                               mu=mu,
                                                                                               logvar=logvar)
-        if self.grad_skip_val == 0.:
-            loss = self.loss_function(sum_log_alphas=sum_log_alphas, sum_log_weights=sum_log_weights)
-        else:
-            optimizer = self.optimizers()
-            loss = self.loss_function(sum_log_alphas=sum_log_alphas, sum_log_weights=sum_log_weights)
-            self.manual_backward(loss, optimizer)
+        loss = self.loss_function(sum_log_alphas=sum_log_alphas, sum_log_weights=sum_log_weights)
 
+        if self.grad_skip_val != 0.:
+            optimizer = self.optimizers()
+            self.manual_backward(loss, optimizer)
             all_params = list(self.decoder_net.parameters()) + list(self.encoder_net.parameters()) + list(
                 self.transitions.parameters())
             ## If we are using cloned decoder to approximate the true one, we add its params to inference optimizer
@@ -671,7 +669,7 @@ class ULA_VAE(BaseMCMC):
     Class for ULA VAE
     '''
 
-    def __init__(self, use_score_matching=False, **kwargs):
+    def __init__(self, use_score_matching, ula_skip_threshold, **kwargs):
         '''
 
         :param use_score_matching: If true, we are using score matching (we do not estimate the correct gradient)
@@ -689,7 +687,7 @@ class ULA_VAE(BaseMCMC):
             transforms = None
         self.transitions = nn.ModuleList(
             [ULA(step_size=self.epsilons[0], learnable=self.learnable_transitions, transforms=transforms,
-                 return_pre_alphas=True) for _ in range(self.K)])
+                 ula_skip_threshold=ula_skip_threshold) for _ in range(self.K)])
         self.save_hyperparameters()
 
     def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
@@ -753,6 +751,18 @@ class ULA_VAE(BaseMCMC):
                                                                                        mu=mu,
                                                                                        logvar=logvar)
         loss = self.loss_function(sum_log_weights) + loss_sm.sum(1).mean()
+        if self.grad_skip_val != 0.:
+            optimizer = self.optimizers()
+            self.manual_backward(loss, optimizer)
+            all_params = list(self.decoder_net.parameters()) + list(self.encoder_net.parameters()) + list(
+                self.transitions.parameters())
+            ## If we are using cloned decoder to approximate the true one, we add its params to inference optimizer
+            if self.use_cloned_decoder:
+                all_params += list(self.cloned_decoder.parameters())
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(all_params, self.grad_clip_val).item()
+            if grad_norm < self.grad_skip_val:
+                optimizer.step()
         return {"loss": loss}
 
     def validation_step(self, batch, batch_idx):
