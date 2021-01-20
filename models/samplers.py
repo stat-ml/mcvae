@@ -151,9 +151,9 @@ class MALA(nn.Module):
         :param learnable: whether learnable (usage for Met model) or not
         '''
         super().__init__()
-        self.noise_multiplier = 1.
-        self.use_barker = use_barker
-        self.learnable = learnable
+        self.noise_multiplier = 1.  # multiplies noise by this term (if needed)
+        self.use_barker = use_barker  # if use barker ratio
+        self.learnable = learnable  # if stepsize are learnable
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
         self.register_buffer('one', torch.tensor(1., dtype=torch.float32))
         self.log_stepsize = nn.Parameter(torch.log(torch.tensor(step_size, dtype=torch.float32)),
@@ -315,7 +315,8 @@ class ULA(nn.Module):
             proposal_density_denominator[reject_mask] = torch.zeros_like(proposal_density_denominator[reject_mask])
             score_match_cur[reject_mask] = torch.zeros_like(score_match_cur[reject_mask])
 
-        return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a, score_match_cur, forward_grad
+        return z_new, proposal_density_numerator - proposal_density_denominator + self.log_jac, a.to(
+            torch.float32), score_match_cur, forward_grad
 
     def get_grad(self, z, target, x=None):
         grad = compute_grad(z, target, x)
