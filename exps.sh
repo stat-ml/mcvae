@@ -35,8 +35,8 @@ python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 100 
 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 100 --num_samples 1 --max_epochs 30 --step_size 0.01 --K 1 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.9
 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 100 --num_samples 1 --max_epochs 30 --step_size 0.01 --K 1 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.99
 
-python main.py --model ULA_VAE --dataset mnist --binarize True --batch_size 100 --num_samples 1 --max_epochs 30 --step_size 0.01 --K 1 --variance_sensitive_step True --ula_skip_threshold 0.1 --acceptance_rate_target 0.9
 python main.py --model ULA_VAE --dataset mnist --binarize True --batch_size 100 --num_samples 1 --max_epochs 30 --step_size 0.01 --K 1 --variance_sensitive_step True --ula_skip_threshold 0.1 --acceptance_rate_target 0.99
+python main.py --model ULA_VAE --dataset mnist --binarize True --batch_size 100 --num_samples 1 --max_epochs 30 --step_size 0.01 --K 1 --variance_sensitive_step True --ula_skip_threshold 0.1 --acceptance_rate_target 0.9
 python main.py --model ULA_VAE --dataset mnist --binarize True --batch_size 100 --num_samples 1 --max_epochs 30 --step_size 0.01 --K 1 --variance_sensitive_step True --ula_skip_threshold 0.01 --acceptance_rate_target 0.9
 python main.py --model ULA_VAE --dataset mnist --binarize True --batch_size 100 --num_samples 1 --max_epochs 30 --step_size 0.01 --K 1 --variance_sensitive_step True --ula_skip_threshold 0.01 --acceptance_rate_target 0.99
 

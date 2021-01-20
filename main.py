@@ -46,7 +46,7 @@ if __name__ == '__main__':
     parser.add_argument("--ula_skip_threshold", type=float,
                         default=0.0)  # Probability threshold, if below -- skip transition
     parser.add_argument("--acceptance_rate_target", type=float,
-                        default=0.95)  # Probability threshold, if below -- skip transition
+                        default=0.95)  # Target acceptance rate
 
     act_func = get_activations()
 

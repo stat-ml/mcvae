@@ -298,8 +298,6 @@ class ULA(nn.Module):
             log_t = target_log_density_upd + proposal_density_numerator - target_log_density_old - proposal_density_denominator + self.log_jac
             log_1_t = torch.logsumexp(torch.cat([torch.zeros_like(log_t).view(-1, 1),
                                                  log_t.view(-1, 1)], dim=-1), dim=-1)  # log(1+t)
-            import pdb
-            pdb.set_trace()
             if self.ula_skip_threshold > 0.:
                 a, _, current_log_alphas_pre = acceptance_ratio(log_t, log_1_t, use_barker=False,
                                                                 return_pre_alphas=True)
