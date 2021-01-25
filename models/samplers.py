@@ -6,7 +6,7 @@ def acceptance_ratio(log_t, log_1_t, use_barker, return_pre_alphas=False):
     if use_barker:
         current_log_alphas_pre = log_t - log_1_t
     else:
-        current_log_alphas_pre = torch.min(torch.zeros_like(log_t), log_t)
+        current_log_alphas_pre = torch.min(log_t, torch.zeros_like(log_t))
 
     log_probs = torch.log(torch.rand_like(log_t))
     a = log_probs <= current_log_alphas_pre
@@ -15,8 +15,8 @@ def acceptance_ratio(log_t, log_1_t, use_barker, return_pre_alphas=False):
         current_log_alphas = current_log_alphas_pre
         current_log_alphas[~a] = (-log_t)[~a]
     else:
-        expression = (torch.ones_like(current_log_alphas_pre) - torch.exp(current_log_alphas_pre)).clamp(min=1e-8)
-        corr_expression = torch.log(expression)
+        expression = torch.ones_like(current_log_alphas_pre) - torch.exp(current_log_alphas_pre)
+        corr_expression = torch.log(expression + 1e-8)
         current_log_alphas = current_log_alphas_pre
         current_log_alphas[~a] = corr_expression[~a]
 
@@ -42,7 +42,7 @@ def compute_grad(z, target, x):
 
 def _get_grad(z, target, x=None):
     s = target(x=x, z=z)
-    grad = torch.autograd.grad(s.sum(), z, create_graph=True)[0]
+    grad = torch.autograd.grad(s.sum(), z, create_graph=True, only_inputs=True)[0]
     return grad
 
 
@@ -151,7 +151,6 @@ class MALA(nn.Module):
         :param learnable: whether learnable (usage for Met model) or not
         '''
         super().__init__()
-        self.noise_multiplier = 1.  # multiplies noise by this term (if needed)
         self.use_barker = use_barker  # if use barker ratio
         self.learnable = learnable  # if stepsize are learnable
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
@@ -168,7 +167,7 @@ class MALA(nn.Module):
         forward_grad = self.get_grad(z=z_old,
                                      target=target,
                                      x=x)
-        update = torch.sqrt(2 * self.step_size) * eps * self.noise_multiplier + self.step_size * forward_grad
+        update = torch.sqrt(2 * self.step_size) * eps + self.step_size * forward_grad
         return z_old + update, update, eps, forward_grad
 
     def make_transition(self, z, target, x=None):
@@ -190,12 +189,12 @@ class MALA(nn.Module):
         target_log_density_upd = target(z=z_upd, x=x)
         target_log_density_old = target(z=z, x=x)
 
-        eps_reverse = (-update - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / (torch.sqrt(
-            2 * self.step_size) * self.noise_multiplier)
+        eps_reverse = (-update - self.step_size * self.get_grad(z=z_upd, target=target, x=x)) / torch.sqrt(
+            2 * self.step_size)
         proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
 
-        log_t = target_log_density_upd + proposal_density_numerator - target_log_density_old - proposal_density_denominator
+        log_t = target_log_density_upd - target_log_density_old - proposal_density_denominator + proposal_density_numerator  # - (eps_reverse.detach() * eps_reverse).sum(1)
         log_1_t = torch.logsumexp(torch.cat([torch.zeros_like(log_t).view(-1, 1),
                                              log_t.view(-1, 1)], dim=-1), dim=-1)  # log(1+t)
 
@@ -219,7 +218,6 @@ class ULA(nn.Module):
         :param learnable: whether learnable (usage for Met model) or not
         '''
         super().__init__()
-        self.noise_multiplier = 1.
         self.learnable = learnable
         self.ula_skip_threshold = ula_skip_threshold
         self.register_buffer('zero', torch.tensor(0., dtype=torch.float32))
@@ -250,10 +248,10 @@ class ULA(nn.Module):
                 z=z_old,
                 target=target,
                 x=x)
-            update = torch.sqrt(2 * self.step_size) * eps * self.noise_multiplier + self.step_size * forward_grad
+            update = torch.sqrt(2 * self.step_size) * eps + self.step_size * forward_grad
             z_new = z_old + update
-            eps_reverse = (z_old - z_new - self.step_size * self.get_grad(z=z_new, target=target, x=x)) / (torch.sqrt(
-                2 * self.step_size) * self.noise_multiplier)
+            eps_reverse = (z_old - z_new - self.step_size * self.get_grad(z=z_new, target=target, x=x)) / torch.sqrt(
+                2 * self.step_size)
             score_match_cur = add
         else:
             add = self.add_nn(z=z_old, x=x)

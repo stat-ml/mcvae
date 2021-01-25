@@ -43,6 +43,9 @@ if __name__ == '__main__':
                         default=False)  # for AIS VAE and ULA (if learn stepsize or not)
     parser.add_argument("--variance_sensitive_step", type=str2bool,
                         default=False)  # for AIS VAE and ULA (adapt stepsize based on dim's variance)
+    parser.add_argument("--use_alpha_annealing", type=str2bool,
+                        default=False)  # for AIS VAE, True if we want anneal sum_log_alphas during training
+
     parser.add_argument("--ula_skip_threshold", type=float,
                         default=0.0)  # Probability threshold, if below -- skip transition
     parser.add_argument("--acceptance_rate_target", type=float,
@@ -52,9 +55,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     print(args)
-    args.gpus = 1
 
-    kwargs = {'num_workers': 20, 'pin_memory': True} if args.gpus else {}
+    kwargs = {'num_workers': 20, 'pin_memory': True}
     train_loader, val_loader = make_dataloaders(dataset=args.dataset,
                                                 batch_size=args.batch_size,
                                                 val_batch_size=args.val_batch_size,
@@ -82,7 +84,8 @@ if __name__ == '__main__':
                         hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
                         grad_clip_val=args.grad_clip_val,
                         use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
-                        variance_sensitive_step=args.variance_sensitive_step)
+                        variance_sensitive_step=args.variance_sensitive_step,
+                        use_alpha_annealing=args.use_alpha_annealing)
     elif args.model == 'ULA_VAE':
         model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
                         num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
@@ -107,4 +110,5 @@ if __name__ == '__main__':
     trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, fast_dev_run=False,
                                             terminate_on_nan=automatic_optimization,
                                             automatic_optimization=automatic_optimization)
+    pl.Trainer()
     trainer.fit(model, train_dataloader=train_loader, val_dataloaders=val_loader)

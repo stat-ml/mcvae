@@ -47,11 +47,11 @@ class NormFlow(nn.Module):
 
     def forward(self, z):
         log_jacob = torch.zeros_like(z[:, 0], dtype=torch.float32)
-        for i, current_flow in enumerate(self.flow):
+        for i in range(len(self.flow)):
             if self.need_permute:
                 z = self.permute(z, i)
-            z_new = current_flow(z)
-            log_jacob += current_flow.log_abs_det_jacobian(z, z_new)
+            z_new = self.flow[i](z)
+            log_jacob += self.flow[i].log_abs_det_jacobian(z, z_new)
             if self.need_permute:
                 z_new = self.permute(z_new, i, undo=True)
             z = z_new

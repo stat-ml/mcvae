@@ -217,7 +217,7 @@ class Base(pl.LightningModule):
         output = self.step(batch)
         d = {"val_loss": output[0]}
         # TODO: Bypass self.current_epoch here or 'dataset'
-        if (self.current_epoch == 49):
+        if self.current_epoch % 10 == 9:
             nll = self.evaluate_nll(batch=batch,
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
@@ -462,7 +462,7 @@ class BaseMCMC(Base):
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
         d = {"val_loss": output[0], "acceptance_rate": output[1].mean(1)}
-        if self.current_epoch == 49:
+        if self.current_epoch % 10 == 9:
             nll = self.evaluate_nll(batch=batch,
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
@@ -544,7 +544,7 @@ class AIS_VAE(BaseMCMC):
     Annealed Importance Sampling VAE.
     '''
 
-    def __init__(self, use_barker, **kwargs):
+    def __init__(self, use_barker, use_alpha_annealing, **kwargs):
         '''
 
         :param use_barker: Flag, whether to use Barker ratio or not
@@ -554,8 +554,9 @@ class AIS_VAE(BaseMCMC):
         self.transitions = nn.ModuleList(
             [MALA(step_size=self.epsilons[0], use_barker=use_barker, learnable=self.learnable_transitions)
              for _ in range(self.K)])
+
+        self.use_alpha_annealing = use_alpha_annealing
         self.save_hyperparameters()
-        self.moving_averages = []
 
     def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
         """
@@ -591,11 +592,11 @@ class AIS_VAE(BaseMCMC):
         sum_log_alphas = torch.zeros_like(z[:, 0])
         z_transformed = z
         for i in range(1, self.K + 1):
-            z_tranformed, current_log_alphas, directions, forward_grad = self.one_transition(current_num=i - 1,
-                                                                                             z=z_transformed,
-                                                                                             x=x,
-                                                                                             annealing_logdens=annealing_logdens(
-                                                                                                 beta=self.beta[i]))
+            z_transformed, current_log_alphas, directions, forward_grad = self.one_transition(current_num=i - 1,
+                                                                                              z=z_transformed,
+                                                                                              x=x,
+                                                                                              annealing_logdens=annealing_logdens(
+                                                                                                  beta=self.beta[i]))
             sum_log_alphas += current_log_alphas
 
             sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
@@ -608,6 +609,7 @@ class AIS_VAE(BaseMCMC):
 
         if not self.variance_sensitive_step:
             self.update_stepsize(accept_rate=all_acceptance.mean(1))
+
         return z_transformed, sum_log_weights, sum_log_alphas, all_acceptance
 
     def step(self, batch):
@@ -624,18 +626,19 @@ class AIS_VAE(BaseMCMC):
 
     def loss_function(self, sum_log_alphas, sum_log_weights):
         batch_size = sum_log_weights.shape[0] // self.num_samples
-        elbo_est = sum_log_weights.view((self.num_samples, batch_size)).sum(0)
-        if len(self.moving_averages) == 0:
-            self.moving_averages.append(torch.mean(sum_log_alphas.view((self.num_samples, batch_size)).sum(0).detach()))
-            self.moving_averages.append(torch.mean(elbo_est.detach()))
+        elbo_est = sum_log_weights.view((self.num_samples, batch_size))
+        if self.use_alpha_annealing:
+            annealing_coeff = np.minimum(1., 0.1 * self.current_epoch)
         else:
-            self.moving_averages[0] = 0.9 * self.moving_averages[0] + 0.1 * torch.mean(
-                sum_log_alphas.view((self.num_samples, batch_size)).sum(0).detach())
-            self.moving_averages[1] = 0.9 * self.moving_averages[1] + 0.1 * torch.mean(elbo_est.detach())
+            annealing_coeff = 1.
 
-        loss = -(torch.mean(elbo_est) + torch.mean(
-            (elbo_est.detach() - self.moving_averages[1]) * (
-                    sum_log_alphas.view((self.num_samples, batch_size)).sum(0) - self.moving_averages[0])))
+        if self.num_samples > 1:
+            multiplier = (self.num_samples * elbo_est.detach() - elbo_est.detach().sum(0)) / (
+                    self.num_samples - 1.)
+        else:
+            multiplier = elbo_est.detach()
+        loss = -torch.mean(elbo_est) - annealing_coeff * torch.mean(
+            multiplier * sum_log_alphas.view((self.num_samples, batch_size)))
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -660,8 +663,8 @@ class AIS_VAE(BaseMCMC):
             grad_norm = torch.nn.utils.clip_grad_norm_(all_params, self.grad_clip_val).item()
             if grad_norm < self.grad_skip_val:
                 optimizer.step()
-
-        return {"loss": loss}
+        else:
+            return {"loss": loss}
 
 
 class ULA_VAE(BaseMCMC):
@@ -768,7 +771,7 @@ class ULA_VAE(BaseMCMC):
     def validation_step(self, batch, batch_idx):
         output = self.step(batch)
         d = {"val_loss": output[0], "acceptance_rate": output[1].mean(1), "val_loss_score_match": output[2]}
-        if (self.current_epoch == 49):
+        if self.current_epoch % 10 == 9:
             nll = self.evaluate_nll(batch=batch,
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
@@ -823,7 +826,7 @@ class Stacked_VAE(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         d = self.current_model.validation_step(batch, batch_idx)
-        if (self.current_epoch == 49):
+        if self.current_epoch % 10 == 9:
             nll = self.current_model.evaluate_nll(batch=batch,
                                                   beta=torch.linspace(0., 1., 5, device=batch[0].device,
                                                                       dtype=torch.float32))
