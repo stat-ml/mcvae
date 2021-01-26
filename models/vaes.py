@@ -627,17 +627,37 @@ class AIS_VAE(BaseMCMC):
     def loss_function(self, sum_log_alphas, sum_log_weights):
         batch_size = sum_log_weights.shape[0] // self.num_samples
         elbo_est = sum_log_weights.view((self.num_samples, batch_size))
+        ######
+        with torch.no_grad():
+            log_weight = elbo_est - torch.max(elbo_est, 0, keepdim=True)[0]  # for stability
+            weight = torch.exp(log_weight)
+            weight = weight / torch.sum(weight, dim=0, keepdim=True)
+            elbo_est_normalized = weight
+
+            log_f_hat = 1. / (self.num_samples - 1.) * (torch.sum(elbo_est, dim=0, keepdim=True) - elbo_est)
+            sum_f = torch.sum(torch.exp(elbo_est), dim=0, keepdim=True) - torch.exp(elbo_est)
+            cv = -np.log(self.num_samples) + torch.logsumexp(
+                torch.cat([sum_f[None], torch.exp(log_f_hat[None])], dim=0), dim=0)
+            multiplier = torch.logsumexp(elbo_est.detach(), dim=0, keepdim=True) - np.log(self.num_samples) - cv
+
+            elbo_est_normalized.detach_()
+            cv.detach_()
+            multiplier.detach_()
+        ######
+
         if self.use_alpha_annealing:
             annealing_coeff = np.minimum(1., 0.1 * self.current_epoch)
         else:
             annealing_coeff = 1.
 
-        if self.num_samples > 1:
-            multiplier = (self.num_samples * elbo_est.detach() - elbo_est.detach().sum(0)) / (
-                    self.num_samples - 1.)
-        else:
-            multiplier = elbo_est.detach()
-        loss = -torch.mean(elbo_est) - annealing_coeff * torch.mean(
+        # if self.num_samples > 1:
+        #     multiplier = (self.num_samples * elbo_est.detach() - elbo_est.detach().sum(0)) / (
+        #             self.num_samples - 1.)
+        #     multiplier = elbo_est.detach()
+        # else:
+        #     multiplier = elbo_est.detach()
+
+        loss = -torch.mean(elbo_est * elbo_est_normalized) - annealing_coeff * torch.mean(
             multiplier * sum_log_alphas.view((self.num_samples, batch_size)))
         return loss
 
