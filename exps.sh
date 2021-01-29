@@ -86,9 +86,18 @@
 
 #python main.py --model ULA_VAE --dataset mnist --binarize True --batch_size 100 --num_samples 1 --max_epochs 100 --step_size 0.01 --K 8 --variance_sensitive_step True --ula_skip_threshold 0.1 --acceptance_rate_target 0.9
 
+#CUDA_VISIBLE_DEVICES=0 python main.py --model VAE --dataset mnist --act_func gelu --binarize True --hidden_dim 2 --batch_size 50 --net_type conv --num_samples 1 --max_epochs 20 --gpus 1
+#CUDA_VISIBLE_DEVICES=0 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 50 --step_size 0.01 --K 1 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing False --gpus 1 --hidden_dim 2
+#CUDA_VISIBLE_DEVICES=0 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 100 --step_size 0.01 --K 3 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing False --gpus 1
+#CUDA_VISIBLE_DEVICES=0 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 100 --step_size 0.01 --K 5 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing False --gpus 1
 
-CUDA_VISIBLE_DEVICES=0 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 100 --step_size 0.01 --K 1 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing False --gpus 1
 #CUDA_VISIBLE_DEVICES=1 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 100 --step_size 0.01 --K 3 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing False --gpus 1
 #CUDA_VISIBLE_DEVICES=1 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 100 --step_size 0.01 --K 5 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing False --gpus 1
 #CUDA_VISIBLE_DEVICES=1 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 100 --step_size 0.01 --K 7 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing False --gpus 1
 #CUDA_VISIBLE_DEVICES=1 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 100 --step_size 0.01 --K 10 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing False --gpus 1
+
+
+#CUDA_VISIBLE_DEVICES=0 python main.py --model ULA_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 1 --max_epochs 20 --step_size 0.01 --K 1 --variance_sensitive_step True --ula_skip_threshold 0.25 --acceptance_rate_target 0.75 --hidden_dim 2 --gpus 1
+
+
+CUDA_VISIBLE_DEVICES=0 python main.py --model AIS_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 5 --max_epochs 100 --step_size 0.01 --K 10 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --use_alpha_annealing True --gpus 1

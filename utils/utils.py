@@ -24,7 +24,12 @@ def str2bool(v):
 class MyDataset(Dataset):
     def __init__(self, data, binarize=False, reshape=False):
         super(MyDataset, self).__init__()
-        self.data = data
+        if isinstance(data, list):
+            self.data = data[0]
+            self.labels = data[1]
+        else:
+            self.data = data
+            self.labels = None
         self.binarize = binarize
         if isinstance(self.data, np.ndarray):
             self.shape_size = self.data.shape[-2]
@@ -53,17 +58,21 @@ class MyDataset(Dataset):
             sample = transforms.ToTensor()(sample)
         if self.binarize:
             sample = torch.distributions.Bernoulli(probs=sample).sample()
-        return sample, -1.
+        label = -1. if self.labels is None else self.labels[item]
+        return sample, label
 
 
 def make_dataloaders(dataset, batch_size, val_batch_size, binarize=False, **kwargs):
     if dataset == 'mnist':
-        train_data = datasets.MNIST('./data', train=True, download=True).train_data.numpy()
-        train_dataset = MyDataset(train_data, binarize=binarize)
+        data = datasets.MNIST('./data', train=True, download=True)
+        train_data = data.train_data.numpy()
+        train_labels = data.train_labels.numpy()
+        train_dataset = MyDataset([train_data, train_labels], binarize=binarize)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 
-        val_data = datasets.MNIST('./data', train=False).test_data.numpy()
-        val_dataset = MyDataset(val_data, binarize=binarize)
+        val_data = data.test_data.numpy()
+        val_labels = data.test_labels.numpy()
+        val_dataset = MyDataset([val_data, val_labels], binarize=binarize)
         val_loader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False, **kwargs)
 
     elif dataset == 'fashionmnist':

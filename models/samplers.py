@@ -204,6 +204,7 @@ class MALA(nn.Module):
         z_new[a] = z_upd[a]
         z_new[~a] = z[~a]
 
+
         return z_new, a.to(torch.float32), current_log_alphas, forward_grad
 
     def get_grad(self, z, target, x=None):

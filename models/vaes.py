@@ -313,10 +313,10 @@ class VAE_with_flows(Base):
         BCE = binary_crossentropy_logits_stable(recon_x, x.view(mu.shape[0], -1)).view(
             (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
         log_Q = torch.mean(torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(z).view(
-            (self.num_samples, batch_size, -1)).sum(-1) - log_jac.view((self.num_samples, -1)), dim=0).mean()
+            (self.num_samples, batch_size, -1)).sum(-1) - log_jac.view((self.num_samples, -1)), dim=0)
         log_Pr = (-0.5 * z_transformed ** 2).view(
-            (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
-        KLD = torch.mean(log_Q - log_Pr).mean(0)
+            (self.num_samples, batch_size, -1)).mean(0).sum(-1)
+        KLD = torch.mean(log_Q - log_Pr)
         loss = BCE + KLD
         return loss
 
@@ -326,7 +326,8 @@ class VAE_with_flows(Base):
         x = repeat_data(x, self.num_samples)
         z_transformed, log_jac = self.Flow(z)
         x_hat = self(z_transformed)
-        loss = self.loss_function(x_hat, x, mu, logvar, z, z_transformed, log_jac)
+        loss = self.loss_function(recon_x=x_hat, x=x, mu=mu, logvar=logvar, z=z, z_transformed=z_transformed,
+                                  log_jac=log_jac)
         return loss, x_hat, z_transformed
 
 
@@ -336,7 +337,8 @@ class BaseMCMC(Base):
     '''
 
     def __init__(self, step_size, K, grad_skip_val, grad_clip_val, use_cloned_decoder,
-                 learnable_transitions, variance_sensitive_step, acceptance_rate_target, beta=None, **kwargs):
+                 learnable_transitions, variance_sensitive_step, acceptance_rate_target, annealing_scheme='linear',
+                 **kwargs):
         '''
 
         :param step_size: stepsize for transitions
@@ -347,7 +349,7 @@ class BaseMCMC(Base):
         :param learnable_transitions: Flag, if true we train stepsize of transitions
         :param variance_sensitive_step: Flag, if true we adapt stepsize in a variance awared manner. If false, adapt it to match target acceptance rate
         :param acceptance_rate_target: Target acceptance rate. Stepsize will be adjusted to fit it.
-        :param beta: List of annealing coefficients, some split of [0, 1] interval
+        :param annealing_scheme: 'linear',
         :param kwargs: specific arguments
         '''
         super().__init__(**kwargs)
@@ -363,8 +365,8 @@ class BaseMCMC(Base):
         self.epsilon_increase_alpha = 1.002
         self.epsilon_min = 0.001  # minimal possible stepsize
         self.epsilon_max = 0.5  # maximal possible stepsize
-
-        if beta is None:
+        self.annealing_scheme = annealing_scheme
+        if self.annealing_scheme == 'linear':
             beta = torch.tensor(np.linspace(0., 1., self.K + 2), dtype=torch.float32)
         self.register_buffer('beta', beta)
         self.grad_skip_val = grad_skip_val
@@ -387,7 +389,7 @@ class BaseMCMC(Base):
         # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.01, steps_per_epoch=10, epochs=5)
         # scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.001, max_lr=0.01, step_size_up=20,
         #                                               mode="exp_range", gamma=0.85)
-        return [optimizer], [scheduler]
+        return [optimizer] , [scheduler]
 
     def run_transitions(self, z, x, mu, logvar):
         '''
@@ -628,34 +630,18 @@ class AIS_VAE(BaseMCMC):
         batch_size = sum_log_weights.shape[0] // self.num_samples
         elbo_est = sum_log_weights.view((self.num_samples, batch_size))
         ######
-        with torch.no_grad():
-            log_weight = elbo_est - torch.max(elbo_est, 0, keepdim=True)[0]  # for stability
-            weight = torch.exp(log_weight)
-            weight = weight / torch.sum(weight, dim=0, keepdim=True)
-            elbo_est_normalized = weight
-
-            log_f_hat = 1. / (self.num_samples - 1.) * (torch.sum(elbo_est, dim=0, keepdim=True) - elbo_est)
-            sum_f = torch.sum(torch.exp(elbo_est), dim=0, keepdim=True) - torch.exp(elbo_est)
-            cv = -np.log(self.num_samples) + torch.logsumexp(
-                torch.cat([sum_f[None], torch.exp(log_f_hat[None])], dim=0), dim=0)
-            multiplier = torch.logsumexp(elbo_est.detach(), dim=0, keepdim=True) - np.log(self.num_samples) - cv
-
-            elbo_est_normalized.detach_()
-            cv.detach_()
-            multiplier.detach_()
-        ######
+        elbo_est_normalized = 1.
 
         if self.use_alpha_annealing:
             annealing_coeff = np.minimum(1., 0.1 * self.current_epoch)
         else:
             annealing_coeff = 1.
 
-        # if self.num_samples > 1:
-        #     multiplier = (self.num_samples * elbo_est.detach() - elbo_est.detach().sum(0)) / (
-        #             self.num_samples - 1.)
-        #     multiplier = elbo_est.detach()
-        # else:
-        #     multiplier = elbo_est.detach()
+        if self.num_samples > 1:
+            multiplier = (self.num_samples * elbo_est.detach() - elbo_est.detach().sum(0)) / (
+                    self.num_samples - 1.)
+        else:
+            multiplier = elbo_est.detach()
 
         loss = -torch.mean(elbo_est * elbo_est_normalized) - annealing_coeff * torch.mean(
             multiplier * sum_log_alphas.view((self.num_samples, batch_size)))
@@ -671,7 +657,7 @@ class AIS_VAE(BaseMCMC):
                                                                                               logvar=logvar)
         loss = self.loss_function(sum_log_alphas=sum_log_alphas, sum_log_weights=sum_log_weights)
 
-        if self.grad_skip_val != 0.:
+        if (self.grad_skip_val != 0.) or (self.grad_clip_val != 0.):
             optimizer = self.optimizers()
             self.manual_backward(loss, optimizer)
             all_params = list(self.decoder_net.parameters()) + list(self.encoder_net.parameters()) + list(
@@ -681,7 +667,10 @@ class AIS_VAE(BaseMCMC):
                 all_params += list(self.cloned_decoder.parameters())
 
             grad_norm = torch.nn.utils.clip_grad_norm_(all_params, self.grad_clip_val).item()
-            if grad_norm < self.grad_skip_val:
+            if self.grad_skip_val != 0.:
+                if grad_norm < self.grad_skip_val:
+                    optimizer.step()
+            else:
                 optimizer.step()
         else:
             return {"loss": loss}
@@ -774,7 +763,7 @@ class ULA_VAE(BaseMCMC):
                                                                                        mu=mu,
                                                                                        logvar=logvar)
         loss = self.loss_function(sum_log_weights) + loss_sm.sum(1).mean()
-        if self.grad_skip_val != 0.:
+        if (self.grad_skip_val != 0.) or (self.grad_clip_val != 0.):
             optimizer = self.optimizers()
             self.manual_backward(loss, optimizer)
             all_params = list(self.decoder_net.parameters()) + list(self.encoder_net.parameters()) + list(
@@ -784,7 +773,10 @@ class ULA_VAE(BaseMCMC):
                 all_params += list(self.cloned_decoder.parameters())
 
             grad_norm = torch.nn.utils.clip_grad_norm_(all_params, self.grad_clip_val).item()
-            if grad_norm < self.grad_skip_val:
+            if self.grad_skip_val != 0.:
+                if grad_norm < self.grad_skip_val:
+                    optimizer.step()
+            else:
                 optimizer.step()
         return {"loss": loss}
 
