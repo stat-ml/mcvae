@@ -277,7 +277,9 @@ class IWAE(Base):
         log_Q = torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(z).view(
             (self.num_samples, -1, self.hidden_dim)).sum(-1)
 
-        log_Pr = torch.sum((-0.5 * z ** 2).view((self.num_samples, -1, self.hidden_dim)), -1)
+        log_Pr = torch.distributions.Normal(loc=torch.tensor(0., device=x.device, dtype=torch.float32),
+                                            scale=torch.tensor(1., device=x.device, dtype=torch.float32)).log_prob(
+            z).view((self.num_samples, -1, self.hidden_dim)).sum(-1)
 
         BCE = binary_crossentropy_logits_stable(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).view(
             (self.num_samples, batch_size, -1)).sum(-1)
@@ -349,7 +351,7 @@ class BaseMCMC(Base):
         :param learnable_transitions: Flag, if true we train stepsize of transitions
         :param variance_sensitive_step: Flag, if true we adapt stepsize in a variance awared manner. If false, adapt it to match target acceptance rate
         :param acceptance_rate_target: Target acceptance rate. Stepsize will be adjusted to fit it.
-        :param annealing_scheme: 'linear',
+        :param annealing_scheme: 'linear', 'sigmoidal', 'all_learnable'
         :param kwargs: specific arguments
         '''
         super().__init__(**kwargs)
@@ -366,9 +368,14 @@ class BaseMCMC(Base):
         self.epsilon_min = 0.001  # minimal possible stepsize
         self.epsilon_max = 0.5  # maximal possible stepsize
         self.annealing_scheme = annealing_scheme
-        if self.annealing_scheme == 'linear':
-            beta = torch.tensor(np.linspace(0., 1., self.K + 2), dtype=torch.float32)
-        self.register_buffer('beta', beta)
+        linear_beta = torch.tensor(np.linspace(0., 1., self.K + 2), dtype=torch.float32)
+        self.register_buffer('linear_beta', linear_beta)
+        if self.annealing_scheme == 'sigmoidal':
+            self.tempering_alpha = nn.Parameter(torch.tensor(0., dtype=torch.float32))
+        elif self.annealing_scheme == 'all_learnable':
+            self.tempering_beta_logits = nn.Parameter(torch.zeros(self.K, dtype=torch.float32))
+        else:
+            raise ValueError('Please, select temrering scheme, which is one of [linear, sigmoidal, all_learnable].')
         self.grad_skip_val = grad_skip_val
         self.grad_clip_val = grad_clip_val
         self.use_cloned_decoder = use_cloned_decoder
@@ -377,19 +384,19 @@ class BaseMCMC(Base):
             self.cloned_decoder = copy.deepcopy(self.decoder_net)
 
     def configure_optimizers(self):
-        all_params = list(self.decoder_net.parameters()) + list(self.encoder_net.parameters()) + list(
-            self.transitions.parameters())
-        ## If we are using cloned decoder to approximate the true one, we add its params to inference optimizer
-        if self.use_cloned_decoder:
-            all_params += list(self.cloned_decoder.parameters())
+        # all_params = list(self.decoder_net.parameters()) + list(self.encoder_net.parameters()) + list(
+        #     self.transitions.parameters())
+        # ## If we are using cloned decoder to approximate the true one, we add its params to inference optimizer
+        # if self.use_cloned_decoder:
+        #     all_params += list(self.cloned_decoder.parameters())
 
-        optimizer = torch.optim.Adam(all_params, lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10, 20, 30], gamma=0.25)
         # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
         # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.01, steps_per_epoch=10, epochs=5)
         # scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.001, max_lr=0.01, step_size_up=20,
         #                                               mode="exp_range", gamma=0.85)
-        return [optimizer] , [scheduler]
+        return [optimizer], [scheduler]
 
     def run_transitions(self, z, x, mu, logvar):
         '''
@@ -452,6 +459,22 @@ class BaseMCMC(Base):
         else:
             raise ValueError
 
+    def get_betas(self, ):
+        if self.annealing_scheme == 'linear':
+            betas = self.linear_beta
+        elif self.annealing_scheme == 'sigmoidal':
+            beta_0 = torch.sigmoid(-self.tempering_alpha)
+            beta_K_1 = torch.sigmoid(self.tempering_alpha)
+            betas_unnormed = torch.sigmoid(self.tempering_alpha * (2 * self.linear_beta - 1))
+            betas = (betas_unnormed - beta_0) / (beta_K_1 - beta_0)
+        elif self.annealing_scheme == 'all_learnable':
+            betas = torch.cat([torch.zeros(1, dtype=torch.float32, device=self.tempering_beta_logits.device),
+                               torch.sigmoid(self.tempering_beta_logits),
+                               torch.ones(1, dtype=torch.float32, device=self.tempering_beta_logits.device)])
+        else:
+            raise ValueError('Please, select temrering scheme, which is one of [linear, sigmoidal, all_learnable].')
+        return betas
+
     def step(self, batch):
         x, _ = batch
         z, mu, logvar = self.enc_rep(x, self.num_samples)
@@ -486,15 +509,16 @@ class AIWAE(BaseMCMC):
 
     def specific_transitions(self, z, x, init_logdensity, annealing_logdens, inference_part=False):
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
-        sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdensity(z))
+        beta = self.get_betas()
+        sum_log_weights = (beta[1] - beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdensity(z))
         z_transformed = z
         for i in range(1, self.K - 1):
             z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
                                                                                 z=z_transformed,
                                                                                 x=x,
                                                                                 annealing_logdens=annealing_logdens(
-                                                                                    beta=self.beta[i]))
-            sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
+                                                                                    beta=beta[i]))
+            sum_log_weights += (beta[i + 1] - beta[i]) * (
                     self.joint_logdensity()(z=z_transformed, x=x) - init_logdensity(z=z_transformed))
             all_acceptance = torch.cat([all_acceptance, directions[None]])
 
@@ -502,7 +526,7 @@ class AIWAE(BaseMCMC):
                                                                             z=z_transformed,
                                                                             x=x,
                                                                             annealing_logdens=annealing_logdens(
-                                                                                self.beta[self.K - 1]))
+                                                                                beta[self.K - 1]))
         all_acceptance = torch.cat([all_acceptance, directions[None]])
         self.update_stepsize(all_acceptance.mean(1))
         return z_transformed, sum_log_weights, None, all_acceptance
@@ -590,7 +614,8 @@ class AIS_VAE(BaseMCMC):
         :return: Specific output: final states, summed low weights, summed log alphas and acceptances
         """
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
-        sum_log_weights = (self.beta[1] - self.beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdensity(z))
+        beta = self.get_betas()
+        sum_log_weights = (beta[1] - beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdensity(z))
         sum_log_alphas = torch.zeros_like(z[:, 0])
         z_transformed = z
         for i in range(1, self.K + 1):
@@ -598,10 +623,10 @@ class AIS_VAE(BaseMCMC):
                                                                                               z=z_transformed,
                                                                                               x=x,
                                                                                               annealing_logdens=annealing_logdens(
-                                                                                                  beta=self.beta[i]))
+                                                                                                  beta=beta[i]))
             sum_log_alphas += current_log_alphas
 
-            sum_log_weights += (self.beta[i + 1] - self.beta[i]) * (
+            sum_log_weights += (beta[i + 1] - beta[i]) * (
                     self.joint_logdensity(use_true_decoder=(i == self.K))(z=z_transformed, x=x) - init_logdensity(
                 z=z_transformed))
 
@@ -716,6 +741,7 @@ class ULA_VAE(BaseMCMC):
 
     def specific_transitions(self, z, x, init_logdensity, annealing_logdens):
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
+        beta = self.get_betas()
         sum_log_weights = -init_logdensity(z=z)
         loss_sm = torch.zeros_like(z)
         z_transformed = z
@@ -724,7 +750,7 @@ class ULA_VAE(BaseMCMC):
                 current_num=i - 1,
                 z=z_transformed,
                 x=x,
-                annealing_logdens=annealing_logdens(beta=self.beta[i]))
+                annealing_logdens=annealing_logdens(beta=beta[i]))
             loss_sm += score_match_cur
             sum_log_weights += current_log_weights
             all_acceptance = torch.cat([all_acceptance, directions[None]])
@@ -750,8 +776,17 @@ class ULA_VAE(BaseMCMC):
 
     def loss_function(self, sum_log_weights):
         batch_size = sum_log_weights.shape[0] // self.num_samples
-        elbo_est = sum_log_weights.view((self.num_samples, batch_size)).sum(0)
-        loss = -torch.mean(elbo_est)
+        elbo_est = sum_log_weights.view((self.num_samples, batch_size))
+        if self.num_samples > 1:
+            with torch.no_grad():
+                log_weight = elbo_est - torch.max(elbo_est, 0)[0]  # for stability
+                weight = torch.exp(log_weight)
+                weight = weight / torch.sum(weight, 0)
+                weight = weight.detach()
+            loss = -torch.mean(torch.sum(weight * elbo_est, dim=0))
+        else:
+            elbo_est = elbo_est.sum(0)
+            loss = -torch.mean(elbo_est)
         return loss
 
     def training_step(self, batch, batch_idx):

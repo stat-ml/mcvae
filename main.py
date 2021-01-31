@@ -45,6 +45,8 @@ if __name__ == '__main__':
                         default=False)  # for AIS VAE and ULA (adapt stepsize based on dim's variance)
     parser.add_argument("--use_alpha_annealing", type=str2bool,
                         default=False)  # for AIS VAE, True if we want anneal sum_log_alphas during training
+    parser.add_argument("--annealing_scheme", type=str,
+                        default='linear')  # for AIS VAE and ULA VAE, strategy to do annealing
 
     parser.add_argument("--ula_skip_threshold", type=float,
                         default=0.0)  # Probability threshold, if below -- skip transition
@@ -85,7 +87,7 @@ if __name__ == '__main__':
                         grad_clip_val=args.grad_clip_val,
                         use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
                         variance_sensitive_step=args.variance_sensitive_step,
-                        use_alpha_annealing=args.use_alpha_annealing, annealing_scheme='linear')
+                        use_alpha_annealing=args.use_alpha_annealing, annealing_scheme=args.annealing_scheme)
     elif args.model == 'ULA_VAE':
         model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
                         num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
@@ -94,7 +96,7 @@ if __name__ == '__main__':
                         grad_clip_val=args.grad_clip_val, use_score_matching=args.use_score_matching,
                         use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
                         variance_sensitive_step=args.variance_sensitive_step,
-                        ula_skip_threshold=args.ula_skip_threshold, annealing_scheme='linear')
+                        ula_skip_threshold=args.ula_skip_threshold, annealing_scheme=args.annealing_scheme)
     elif args.model == 'Stacked_VAE':
         model = Stacked_VAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
                             hidden_dim=args.hidden_dim,
@@ -104,8 +106,8 @@ if __name__ == '__main__':
     else:
         raise ValueError
 
-    automatic_optimization = args.grad_skip_val == 0.
     args.gradient_clip_val = args.grad_clip_val
+    automatic_optimization = (args.grad_skip_val == 0.) and (args.gradient_clip_val == 0.)
 
     trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger, fast_dev_run=False,
                                             terminate_on_nan=automatic_optimization,
