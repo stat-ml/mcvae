@@ -110,3 +110,4 @@
 #CUDA_VISIBLE_DEVICES=0 python main.py --model AIS_VAE --dataset cifar --binarize False --hidden_dim 128 --batch_size 50 --num_samples 5 --step_size 0.01 --K 3 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --max_epochs 100 --gpus 1
 #CUDA_VISIBLE_DEVICES=0 python main.py --model AIS_VAE --dataset cifar --binarize False --hidden_dim 128 --batch_size 50 --num_samples 5 --step_size 0.01 --K 5 --use_barker False --variance_sensitive_step True --acceptance_rate_target 0.8 --max_epochs 100 --gpus 1
 
+CUDA_VISIBLE_DEVICES=0 python main.py --model ULA_VAE --dataset mnist --binarize True --batch_size 50 --num_samples 1 --max_epochs 100 --step_size 0.01 --K 5 --variance_sensitive_step True --ula_skip_threshold 0.5 --acceptance_rate_target 0.99 --annealing_scheme sigmoidal --gpus 1
