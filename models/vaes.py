@@ -371,7 +371,7 @@ class BaseMCMC(Base):
         linear_beta = torch.tensor(np.linspace(0., 1., self.K + 2), dtype=torch.float32)
         self.register_buffer('linear_beta', linear_beta)
         if self.annealing_scheme == 'sigmoidal':
-            self.tempering_alpha = nn.Parameter(torch.tensor(-3., dtype=torch.float32))
+            self.tempering_logalpha = nn.Parameter(torch.tensor(-3., dtype=torch.float32))
         elif self.annealing_scheme == 'all_learnable':
             self.tempering_beta_logits = nn.Parameter(torch.zeros(self.K, dtype=torch.float32))
         else:
@@ -463,15 +463,17 @@ class BaseMCMC(Base):
         if self.annealing_scheme == 'linear':
             betas = self.linear_beta
         elif self.annealing_scheme == 'sigmoidal':
-            beta_0 = torch.sigmoid(-self.tempering_alpha)
-            beta_K_1 = torch.sigmoid(self.tempering_alpha)
-            betas_unnormed = torch.sigmoid(self.tempering_alpha * (2 * self.linear_beta - 1))
+            beta_0 = torch.sigmoid(-torch.exp(self.tempering_logalpha))
+            beta_K_1 = torch.sigmoid(torch.exp(self.tempering_logalpha))
+            betas_unnormed = torch.sigmoid(torch.exp(self.tempering_logalpha) * (2 * self.linear_beta - 1))
             betas = (betas_unnormed - beta_0) / (beta_K_1 - beta_0)
 
         elif self.annealing_scheme == 'all_learnable':
-            betas = torch.cat([torch.zeros(1, dtype=torch.float32, device=self.tempering_beta_logits.device),
-                               torch.sigmoid(self.tempering_beta_logits),
-                               torch.ones(1, dtype=torch.float32, device=self.tempering_beta_logits.device)])
+            betas = torch.flip(torch.cat([torch.zeros(1, dtype=torch.float32, device=self.tempering_beta_logits.device),
+                                          torch.sigmoid(self.tempering_beta_logits),
+                                          torch.ones(1, dtype=torch.float32,
+                                                     device=self.tempering_beta_logits.device)]), dims=(0,))
+            betas = torch.flip(torch.cumprod(betas, dim=0), dims=(0,))
         else:
             raise ValueError('Please, select temrering scheme, which is one of [linear, sigmoidal, all_learnable].')
         return betas
