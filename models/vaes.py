@@ -304,7 +304,7 @@ class IWAE(Base):
         weight = torch.exp(log_weight)
         weight = weight / torch.sum(weight, 0)
         weight = weight.detach()
-        loss = torch.mean(torch.sum(weight * (-log_Pr - likelihood + log_Q), 0)) + torch.log(self.num_samples)
+        loss = torch.mean(torch.sum(weight * (-log_Pr - likelihood + log_Q), 0)) + np.log(1. * self.num_samples)
 
         return loss
 
