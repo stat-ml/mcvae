@@ -151,10 +151,21 @@ class Base(pl.LightningModule):
             log_Pr = torch.distributions.Normal(loc=torch.tensor(0., device=x.device, dtype=torch.float32),
                                                 scale=torch.tensor(1., device=x.device, dtype=torch.float32)).log_prob(
                 z).sum(-1)
-            return -binary_crossentropy_logits_stable(x_reconst.view(x_reconst.shape[0], -1),
-                                                      x.view(x_reconst.shape[0], -1)).sum(-1) + log_Pr
+            likelihood = self.get_likelihood(x_reconst, x)
+            return likelihood + log_Pr
 
         return density
+
+    def get_likelihood(self, x_reconst, x):
+        if self.dataset in ['mnist', 'fashionmnist']:
+            likelihood = -binary_crossentropy_logits_stable(x_reconst.view(x_reconst.shape[0], -1),
+                                                            x.view(x_reconst.shape[0], -1)).sum(-1)
+        else:
+            x_reconst = x_reconst.view(x_reconst.shape[0], -1)
+            likelihood = torch.distributions.Normal(loc=x_reconst,
+                                                    scale=torch.ones_like(x_reconst)).log_prob(
+                x.view(*x_reconst.shape)).sum(-1)
+        return likelihood
 
     def validation_epoch_end(self, outputs):
         # Tensorboard logging
@@ -194,13 +205,14 @@ class Base(pl.LightningModule):
 
         if self.dataset.lower() in ['cifar', 'mnist', 'omniglot', 'celeba']:
             if self.dataset.lower().find('cifar') > -1:
-                x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 32, 32))
+                x_hat = self(self.random_z.to(val_loss.device)).view((-1, 3, 32, 32)).clamp(0., 1.)
+                # x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 32, 32))
             elif self.dataset.lower().find('mnist') > -1:
                 x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 1, 28, 28))
             elif self.dataset.lower().find('omniglot') > -1:
                 x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 1, 105, 105))
             elif self.dataset.lower().find('celeba') > -1:
-                x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 3, 64, 64))
+                x_hat = self(self.random_z.to(val_loss.device)).view((-1, 3, 64, 64)).clamp(0., 1.)
             grid = torchvision.utils.make_grid(x_hat)
             self.logger.experiment.add_image(f'{self.dataset}/{self.name}/image', grid, self.current_epoch)
         else:
@@ -255,11 +267,13 @@ class VAE(Base):
     def loss_function(self, recon_x, x, mu, logvar):
         batch_size = mu.shape[0] // self.num_samples
 
-        BCE = binary_crossentropy_logits_stable(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).view(
-            (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
+        # BCE = binary_crossentropy_logits_stable(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).view(
+        #     (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
+        likelihood = self.get_likelihood(recon_x, x)
+        likelihood = likelihood.view(self.num_samples, batch_size).mean(0).mean()
         KLD = -0.5 * torch.mean((1 + logvar - mu.pow(2) - logvar.exp()).view(
             (self.num_samples, -1, self.hidden_dim)).mean(0).sum(-1))
-        loss = BCE + KLD
+        loss = -likelihood + KLD
         return loss
 
     def step(self, batch):
@@ -281,14 +295,16 @@ class IWAE(Base):
                                             scale=torch.tensor(1., device=x.device, dtype=torch.float32)).log_prob(
             z).view((self.num_samples, -1, self.hidden_dim)).sum(-1)
 
-        BCE = binary_crossentropy_logits_stable(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).view(
-            (self.num_samples, batch_size, -1)).sum(-1)
-        log_weight = log_Pr - BCE - log_Q
+        # BCE = binary_crossentropy_logits_stable(recon_x.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).view(
+        #     (self.num_samples, batch_size, -1)).sum(-1)
+        likelihood = self.get_likelihood(recon_x, x)
+        likelihood = likelihood.view(self.num_samples, batch_size)
+        log_weight = log_Pr + likelihood - log_Q
         log_weight = log_weight - torch.max(log_weight, 0)[0]  # for stability
         weight = torch.exp(log_weight)
         weight = weight / torch.sum(weight, 0)
         weight = weight.detach()
-        loss = torch.mean(torch.sum(weight * (-log_Pr + BCE + log_Q), 0))
+        loss = torch.mean(torch.sum(weight * (-log_Pr - likelihood + log_Q), 0)) + torch.log(self.num_samples)
 
         return loss
 
@@ -312,14 +328,16 @@ class VAE_with_flows(Base):
 
     def loss_function(self, recon_x, x, mu, logvar, z, z_transformed, log_jac):
         batch_size = mu.shape[0] // self.num_samples
-        BCE = binary_crossentropy_logits_stable(recon_x, x.view(mu.shape[0], -1)).view(
-            (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
+        # BCE = binary_crossentropy_logits_stable(recon_x, x.view(mu.shape[0], -1)).view(
+        #     (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
+        likelihood = self.get_likelihood(recon_x, x)
+        likelihood = likelihood.view(self.num_samples, batch_size).mean(0).mean()
         log_Q = torch.mean(torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(z).view(
             (self.num_samples, batch_size, -1)).sum(-1) - log_jac.view((self.num_samples, -1)), dim=0)
         log_Pr = (-0.5 * z_transformed ** 2).view(
             (self.num_samples, batch_size, -1)).mean(0).sum(-1)
         KLD = torch.mean(log_Q - log_Pr)
-        loss = BCE + KLD
+        loss = -likelihood + KLD
         return loss
 
     def step(self, batch):
@@ -370,7 +388,9 @@ class BaseMCMC(Base):
         self.annealing_scheme = annealing_scheme
         linear_beta = torch.tensor(np.linspace(0., 1., self.K + 2), dtype=torch.float32)
         self.register_buffer('linear_beta', linear_beta)
-        if self.annealing_scheme == 'sigmoidal':
+        if self.annealing_scheme == 'linear':
+            pass
+        elif self.annealing_scheme == 'sigmoidal':
             self.tempering_logalpha = nn.Parameter(torch.tensor(-3., dtype=torch.float32))
         elif self.annealing_scheme == 'all_learnable':
             self.tempering_beta_logits = nn.Parameter(torch.zeros(self.K, dtype=torch.float32))
@@ -495,77 +515,6 @@ class BaseMCMC(Base):
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
         return d
-
-
-class AIWAE(BaseMCMC):
-    def __init__(self, n_leapfrogs, use_barker, **kwargs):
-        super().__init__(**kwargs)
-        self.save_hyperparameters()
-        self.transitions = nn.ModuleList(
-            [HMC(n_leapfrogs=n_leapfrogs, step_size=self.epsilons[0], use_barker=use_barker)
-             for _ in range(self.K - 1)])
-
-    def one_transition(self, current_num, z, x, annealing_logdens):
-        z_new, _, directions, current_log_alphas = self.transitions[current_num].make_transition(z=z, x=x,
-                                                                                                 target=annealing_logdens)
-        return z_new, current_log_alphas, directions
-
-    def specific_transitions(self, z, x, init_logdensity, annealing_logdens, inference_part=False):
-        all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
-        beta = self.get_betas()
-        sum_log_weights = (beta[1] - beta[0]) * (self.joint_logdensity()(z=z, x=x) - init_logdensity(z))
-        z_transformed = z
-        for i in range(1, self.K - 1):
-            z_transformed, current_log_alphas, directions = self.one_transition(current_num=i - 1,
-                                                                                z=z_transformed,
-                                                                                x=x,
-                                                                                annealing_logdens=annealing_logdens(
-                                                                                    beta=beta[i]))
-            sum_log_weights += (beta[i + 1] - beta[i]) * (
-                    self.joint_logdensity()(z=z_transformed, x=x) - init_logdensity(z=z_transformed))
-            all_acceptance = torch.cat([all_acceptance, directions[None]])
-
-        z_transformed, current_log_alphas, directions = self.one_transition(current_num=self.K - 2,
-                                                                            z=z_transformed,
-                                                                            x=x,
-                                                                            annealing_logdens=annealing_logdens(
-                                                                                beta[self.K - 1]))
-        all_acceptance = torch.cat([all_acceptance, directions[None]])
-        self.update_stepsize(all_acceptance.mean(1))
-        return z_transformed, sum_log_weights, None, all_acceptance
-
-    def training_step(self, batch, batch_idx, optimizer_idx):
-        x, _ = batch
-        if optimizer_idx == 0:  # decoder
-            with torch.no_grad():
-                z, mu, logvar = self.enc_rep(x, self.num_samples)
-                x = repeat_data(x, self.num_samples)
-                z_transformed, sum_log_weights, _, all_acceptance = self.run_transitions(z=z, x=x, mu=mu, logvar=logvar)
-                x_hat = self(z_transformed)
-            loss = self.loss_function(z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part=False)
-        else:  # encoder
-            z, mu, logvar = self.enc_rep(x)
-            x_hat = self(z)
-            loss = self.loss_function(z, x_hat, x, mu, logvar, None, inference_part=True)
-        return {"loss": loss}
-
-    def loss_function(self, z_transformed, x_hat, x, mu, logvar, sum_log_weights, inference_part):
-        batch_size = mu.shape[0] // self.num_samples
-        if inference_part:
-            # BCE = F.binary_cross_entropy_with_logits(x_hat.view(mu.shape[0], -1), x.view(mu.shape[0], -1),
-            #                                          reduction='none').sum(-1).mean()
-            BCE = binary_crossentropy_logits_stable(x_hat.view(mu.shape[0], -1), x.view(mu.shape[0], -1)).sum(-1).mean()
-            KLD = -0.5 * torch.mean((1 + logvar - mu.pow(2) - logvar.exp()).sum(-1))
-            loss = BCE + KLD
-        else:
-            sum_log_weights = sum_log_weights.view((self.num_samples, batch_size))
-            log_weight = sum_log_weights - torch.max(sum_log_weights, 0)[0]  # for stability
-            weight = torch.exp(log_weight)
-            weight = weight / torch.sum(weight, 0)
-            loss = -torch.mean(
-                torch.sum(weight * self.joint_logdensity()(z=z_transformed, x=x).view((self.num_samples, batch_size)),
-                          0))
-        return loss
 
 
 class AIS_VAE(BaseMCMC):

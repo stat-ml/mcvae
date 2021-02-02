@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
 
-from models import VAE, IWAE, AIWAE, AIS_VAE, ULA_VAE, Stacked_VAE
+from models import VAE, IWAE, AIS_VAE, ULA_VAE, Stacked_VAE
 from utils import make_dataloaders, get_activations, str2bool
 
 if __name__ == '__main__':
@@ -12,7 +12,7 @@ if __name__ == '__main__':
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
 
     parser.add_argument("--model", default="Stacked_VAE",
-                        choices=["VAE", "IWAE", "AIWAE", "AIS_VAE", "ULA_VAE", "Stacked_VAE"])
+                        choices=["VAE", "IWAE", "AIS_VAE", "ULA_VAE", "Stacked_VAE"])
 
     ## Dataset params
     parser.add_argument("--dataset", default='mnist', choices=['mnist', 'fashionmnist', 'cifar', 'omniglot', 'celeba'])
