@@ -412,6 +412,7 @@ class BaseMCMC(Base):
         self.grad_skip_val = grad_skip_val
         self.grad_clip_val = grad_clip_val
         self.use_cloned_decoder = use_cloned_decoder
+        self.use_stepsize_update = True
         if self.use_cloned_decoder:
             # In case we use cloned decoder, we create an exact copy of a true one in the beginning. After that, it will be trained in its own manner
             self.cloned_decoder = copy.deepcopy(self.decoder_net)
@@ -465,32 +466,33 @@ class BaseMCMC(Base):
         :param current_gradient_batch: Current batch of gradients of target logdensity wrt inputs
         :return:
         '''
-        if not self.variance_sensitive_step:
-            accept_rate = list(accept_rate.cpu().data.numpy())
-            for l in range(0, self.K):
-                if accept_rate[l] < self.acceptance_rate_target:
-                    self.epsilons[l] *= self.epsilon_decrease_alpha
-                else:
-                    self.epsilons[l] *= self.epsilon_increase_alpha
+        if self.use_stepsize_update:
+            if not self.variance_sensitive_step:
+                accept_rate = list(accept_rate.cpu().data.numpy())
+                for l in range(0, self.K):
+                    if accept_rate[l] < self.acceptance_rate_target:
+                        self.epsilons[l] *= self.epsilon_decrease_alpha
+                    else:
+                        self.epsilons[l] *= self.epsilon_increase_alpha
 
-                if self.epsilons[l] < self.epsilon_min:
-                    self.epsilons[l] = self.epsilon_min
-                if self.epsilons[l] > self.epsilon_max:
-                    self.epsilons[l] = self.epsilon_max
-                self.transitions[l].log_stepsize.data = torch.tensor(np.log(self.epsilons[l]), dtype=torch.float32,
-                                                                     device=self.transitions[l].log_stepsize.device)
-        elif self.variance_sensitive_step:
-            with torch.no_grad():
-                gradient_std = torch.std(current_gradient_batch, dim=0)
-                self.epsilons[current_tran_id] = 0.9 * self.epsilons[current_tran_id] + 0.1 * self.gamma_0[
-                    current_tran_id] / (gradient_std + 1.)
-                self.transitions[current_tran_id].log_stepsize.data = torch.log(self.epsilons[current_tran_id])
-                if accept_rate.mean() < self.acceptance_rate_target:
-                    self.gamma_0[current_tran_id] *= 0.99
-                else:
-                    self.gamma_0[current_tran_id] *= 1.02
+                    if self.epsilons[l] < self.epsilon_min:
+                        self.epsilons[l] = self.epsilon_min
+                    if self.epsilons[l] > self.epsilon_max:
+                        self.epsilons[l] = self.epsilon_max
+                    self.transitions[l].log_stepsize.data = torch.tensor(np.log(self.epsilons[l]), dtype=torch.float32,
+                                                                         device=self.transitions[l].log_stepsize.device)
+            else:
+                with torch.no_grad():
+                    gradient_std = torch.std(current_gradient_batch, dim=0)
+                    self.epsilons[current_tran_id] = 0.9 * self.epsilons[current_tran_id] + 0.1 * self.gamma_0[
+                        current_tran_id] / (gradient_std + 1.)
+                    self.transitions[current_tran_id].log_stepsize.data = torch.log(self.epsilons[current_tran_id])
+                    if accept_rate.mean() < self.acceptance_rate_target:
+                        self.gamma_0[current_tran_id] *= 0.99
+                    else:
+                        self.gamma_0[current_tran_id] *= 1.02
         else:
-            raise ValueError
+            pass
 
     def get_betas(self, ):
         if self.annealing_scheme == 'linear':
