@@ -47,11 +47,14 @@ if __name__ == '__main__':
                         default=False)  # for AIS VAE, True if we want anneal sum_log_alphas during training
     parser.add_argument("--annealing_scheme", type=str,
                         default='linear')  # for AIS VAE and ULA VAE, strategy to do annealing
+    parser.add_argument("--specific_likelihood", type=str,
+                        default=None)  # specific likelihood
 
     parser.add_argument("--ula_skip_threshold", type=float,
                         default=0.0)  # Probability threshold, if below -- skip transition
     parser.add_argument("--acceptance_rate_target", type=float,
                         default=0.95)  # Target acceptance rate
+    parser.add_argument("--sigma", type=float, default=1.)
 
     act_func = get_activations()
 
@@ -68,17 +71,13 @@ if __name__ == '__main__':
     if args.model == "VAE":
         model = VAE(shape=image_shape, act_func=act_func[args.act_func],
                     num_samples=args.num_samples, hidden_dim=args.hidden_dim,
-                    net_type=args.net_type, dataset=args.dataset)
+                    net_type=args.net_type, dataset=args.dataset, specific_likelihood=args.specific_likelihood,
+                    sigma=args.sigma)
     elif args.model == "IWAE":
         model = IWAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
                      hidden_dim=args.hidden_dim,
-                     name=args.model, net_type=args.net_type, dataset=args.dataset)
-    elif args.model == 'AIWAE':
-        model = AIWAE(shape=image_shape, step_size=args.step_size, n_leapfrogs=args.n_leapfrogs, K=args.K,
-                      use_barker=args.use_barker,
-                      act_func=act_func[args.act_func],
-                      num_samples=args.num_samples, hidden_dim=args.hidden_dim,
-                      name=args.model, net_type=args.net_type, dataset=args.dataset)
+                     name=args.model, net_type=args.net_type, dataset=args.dataset,
+                     specific_likelihood=args.specific_likelihood, sigma=args.sigma)
     elif args.model == 'AIS_VAE':
         model = AIS_VAE(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
                         num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
@@ -87,7 +86,8 @@ if __name__ == '__main__':
                         grad_clip_val=args.grad_clip_val,
                         use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
                         variance_sensitive_step=args.variance_sensitive_step,
-                        use_alpha_annealing=args.use_alpha_annealing, annealing_scheme=args.annealing_scheme)
+                        use_alpha_annealing=args.use_alpha_annealing, annealing_scheme=args.annealing_scheme,
+                        specific_likelihood=args.specific_likelihood, sigma=args.sigma)
     elif args.model == 'ULA_VAE':
         model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
                         num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
@@ -96,7 +96,8 @@ if __name__ == '__main__':
                         grad_clip_val=args.grad_clip_val, use_score_matching=args.use_score_matching,
                         use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
                         variance_sensitive_step=args.variance_sensitive_step,
-                        ula_skip_threshold=args.ula_skip_threshold, annealing_scheme=args.annealing_scheme)
+                        ula_skip_threshold=args.ula_skip_threshold, annealing_scheme=args.annealing_scheme,
+                        specific_likelihood=args.specific_likelihood, sigma=args.sigma)
     elif args.model == 'Stacked_VAE':
         model = Stacked_VAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
                             hidden_dim=args.hidden_dim,

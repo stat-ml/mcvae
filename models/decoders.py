@@ -25,10 +25,12 @@ class FC_decoder_mnist(nn.Module):
     def __init__(self, act_func, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(hidden_dim, 400),
-            act_func(),
-            nn.Linear(400, 784)
+            # nn.Linear(hidden_dim, 400),
+            # act_func(),
+            nn.Linear(hidden_dim, 784)
         )
+        for p in self.net.parameters():
+            p.requires_grad_(False)
         self.hidden_dim = hidden_dim
 
     def forward(self, z):

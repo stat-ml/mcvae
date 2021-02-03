@@ -68,7 +68,7 @@ class Base(pl.LightningModule):
     '''
 
     def __init__(self, num_samples, act_func, shape, hidden_dim, net_type,
-                 dataset, name="VAE", **kwargs):
+                 dataset, specific_likelihood=None, sigma=1., name="VAE", **kwargs):
         '''
 
         :param num_samples: how many latent samples per object to use
@@ -101,6 +101,9 @@ class Base(pl.LightningModule):
         # We dont need these transitions to have trainable parameters
         for p in self.transitions_nll.parameters():
             p.requires_grad_(False)
+
+        self.sigma = sigma  ## Noise for gaussian likelihood
+        self.specific_likelihood = specific_likelihood
 
     def encode(self, x):
         # We treat the first half of output as mu, and the rest as logvar
@@ -157,14 +160,24 @@ class Base(pl.LightningModule):
         return density
 
     def get_likelihood(self, x_reconst, x):
-        if self.dataset in ['mnist', 'fashionmnist']:
+        if self.specific_likelihood is None:
+            if self.dataset in ['mnist', 'fashionmnist']:
+                likelihood = -binary_crossentropy_logits_stable(x_reconst.view(x_reconst.shape[0], -1),
+                                                                x.view(x_reconst.shape[0], -1)).sum(-1)
+            else:
+                x_reconst = x_reconst.view(x_reconst.shape[0], -1)
+                likelihood = torch.distributions.Normal(loc=x_reconst,
+                                                        scale=self.sigma * torch.ones_like(x_reconst)).log_prob(
+                    x.view(*x_reconst.shape)).sum(-1)
+        elif self.specific_likelihood == 'bernoulli':
             likelihood = -binary_crossentropy_logits_stable(x_reconst.view(x_reconst.shape[0], -1),
                                                             x.view(x_reconst.shape[0], -1)).sum(-1)
         else:
             x_reconst = x_reconst.view(x_reconst.shape[0], -1)
             likelihood = torch.distributions.Normal(loc=x_reconst,
-                                                    scale=torch.ones_like(x_reconst)).log_prob(
+                                                    scale=self.sigma * torch.ones_like(x_reconst)).log_prob(
                 x.view(*x_reconst.shape)).sum(-1)
+
         return likelihood
 
     def validation_epoch_end(self, outputs):

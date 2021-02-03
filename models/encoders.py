@@ -7,9 +7,9 @@ class FC_encoder_mnist(nn.Module):
     def __init__(self, act_func, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(784, 400),
-            act_func(),
-            nn.Linear(400, 2 * hidden_dim)
+            # nn.Linear(784, 400),
+            # act_func(),
+            nn.Linear(784, 2 * hidden_dim)
         )
 
     def forward(self, x):
