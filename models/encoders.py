@@ -7,9 +7,9 @@ class backward_kernel_mnist(nn.Module):
     def __init__(self, act_func, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(hidden_dim, 400),
+            nn.Linear(hidden_dim, 200),
             act_func(),
-            nn.Linear(400, 2 * hidden_dim)
+            nn.Linear(200, 2 * hidden_dim)
         )
 
     def forward(self, z):
