@@ -3,6 +3,20 @@ import torch.nn as nn
 from models.aux import Down, DoubleConv
 
 
+class backward_kernel_mnist(nn.Module):
+    def __init__(self, act_func, hidden_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(hidden_dim, 400),
+            act_func(),
+            nn.Linear(400, 2 * hidden_dim)
+        )
+
+    def forward(self, z):
+        out = self.net(z)
+        return out[:, :out.shape[1] // 2], out[:, out.shape[1] // 2:]
+
+
 class FC_encoder_mnist(nn.Module):
     def __init__(self, act_func, hidden_dim):
         super().__init__()

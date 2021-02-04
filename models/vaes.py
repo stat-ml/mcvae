@@ -8,7 +8,7 @@ import torchvision
 
 from models.aux import ULA_nn_sm
 from models.decoders import get_decoder
-from models.encoders import get_encoder
+from models.encoders import get_encoder, backward_kernel_mnist
 from models.normflows import NormFlow
 from models.samplers import HMC, MALA, ULA
 
@@ -673,7 +673,7 @@ class ULA_VAE(BaseMCMC):
     Class for ULA VAE
     '''
 
-    def __init__(self, use_score_matching, ula_skip_threshold, **kwargs):
+    def __init__(self, use_score_matching, ula_skip_threshold, use_reverse_kernel=False, **kwargs):
         '''
 
         :param use_score_matching: If true, we are using score matching (we do not estimate the correct gradient)
@@ -692,6 +692,13 @@ class ULA_VAE(BaseMCMC):
         self.transitions = nn.ModuleList(
             [ULA(step_size=self.epsilons[0], learnable=self.learnable_transitions, transforms=transforms,
                  ula_skip_threshold=ula_skip_threshold) for _ in range(self.K)])
+
+        if use_reverse_kernel:
+            self.reverse_kernels = nn.ModuleList(
+                [backward_kernel_mnist(act_func=nn.GELU, hidden_dim=self.hidden_dim) for _ in range(self.K)])
+        else:
+            self.reverse_kernels = [None for _ in range(self.K)]
+
         self.save_hyperparameters()
 
     def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
@@ -703,7 +710,8 @@ class ULA_VAE(BaseMCMC):
             z_new, current_log_weights, directions, score_match_cur, forward_grad = self.transitions[
                 current_num].make_transition(z=z,
                                              x=x,
-                                             target=annealing_logdens)
+                                             target=annealing_logdens,
+                                             reverse_kernel=self.reverse_kernels[current_num])
             return z_new, current_log_weights, directions, score_match_cur, forward_grad
 
     def specific_transitions(self, z, x, init_logdensity, annealing_logdens):

@@ -204,7 +204,6 @@ class MALA(nn.Module):
         z_new[a] = z_upd[a]
         z_new[~a] = z[~a]
 
-
         return z_new, a.to(torch.float32), current_log_alphas, forward_grad
 
     def get_grad(self, z, target, x=None):
@@ -268,7 +267,7 @@ class ULA(nn.Module):
         self.log_jac += torch.sum(torch.log(S), dim=1) * sign
         return S
 
-    def make_transition(self, z, target, x=None):
+    def make_transition(self, z, target, x=None, reverse_kernel=None):
         """
         Input:
         z_old - current position
@@ -285,7 +284,12 @@ class ULA(nn.Module):
 
         z_upd, eps, eps_reverse, score_match_cur, forward_grad = self._forward_step(z_old=z, x=x, target=target)
 
-        proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
+        if reverse_kernel is None:
+            proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
+        else:
+            mu, logvar = reverse_kernel(z)
+            proposal_density_numerator = torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
+                z_upd).sum(1)
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
 
         z_new = z_upd
