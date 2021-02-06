@@ -284,6 +284,8 @@ class ULA(nn.Module):
 
         z_upd, eps, eps_reverse, score_match_cur, forward_grad = self._forward_step(z_old=z, x=x, target=target)
 
+        # import pdb
+        # pdb.set_trace()
         if reverse_kernel is None:
             proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         else:

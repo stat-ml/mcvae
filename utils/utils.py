@@ -38,7 +38,7 @@ class MyDataset(Dataset):
         if isinstance(self.data, np.ndarray):
             self.shape_size = self.data.shape[-2]
         elif isinstance(self.data[0], str):
-            self.shape_size = 64
+            self.shape_size = 80
         else:
             self.shape_size = self.data[0][0].size[-1]
         self.reshape = reshape
