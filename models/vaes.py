@@ -130,7 +130,7 @@ class Base(pl.LightningModule):
     def forward(self, z):
         return self.decode(z)
 
-    def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
+    def one_transition(self, current_num, z, x, annealing_logdens, mu=None, nll=False):
         # nll flag is to use those transitions, which are specifically defined for nll.
         z_new = self.transitions_nll[current_num].make_transition(z=z, x=x,
                                                                   target=annealing_logdens)
@@ -423,7 +423,6 @@ class BaseMCMC(Base):
         # ## If we are using cloned decoder to approximate the true one, we add its params to inference optimizer
         # if self.use_cloned_decoder:
         #     all_params += list(self.cloned_decoder.parameters())
-
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10, 20, 30], gamma=0.25)
         # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
@@ -453,7 +452,8 @@ class BaseMCMC(Base):
             z=z,
             x=x,
             init_logdensity=init_logdensity,
-            annealing_logdens=annealing_logdens
+            annealing_logdens=annealing_logdens,
+            mu=mu
         )
 
         return output
@@ -551,7 +551,7 @@ class AIS_VAE(BaseMCMC):
         self.use_alpha_annealing = use_alpha_annealing
         self.save_hyperparameters()
 
-    def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
+    def one_transition(self, current_num, z, x, annealing_logdens, mu=None, nll=False):
         """
 
         :param current_num: current transition number
@@ -571,7 +571,7 @@ class AIS_VAE(BaseMCMC):
                                                                                                                 target=annealing_logdens)
             return z_new, current_log_alphas, directions, forward_grad
 
-    def specific_transitions(self, z, x, init_logdensity, annealing_logdens):
+    def specific_transitions(self, z, x, init_logdensity, annealing_logdens, mu):
         """
         Specific transition for AIS VAE
         :param z: current state
@@ -701,7 +701,7 @@ class ULA_VAE(BaseMCMC):
 
         self.save_hyperparameters()
 
-    def one_transition(self, current_num, z, x, annealing_logdens, nll=False):
+    def one_transition(self, current_num, z, x, annealing_logdens, mu=None, nll=False):
         if nll:
             z_new = self.transitions_nll[current_num].make_transition(z=z, x=x,
                                                                       target=annealing_logdens)
@@ -711,10 +711,11 @@ class ULA_VAE(BaseMCMC):
                 current_num].make_transition(z=z,
                                              x=x,
                                              target=annealing_logdens,
-                                             reverse_kernel=self.reverse_kernels[current_num])
+                                             reverse_kernel=self.reverse_kernels[current_num],
+                                             mu_amortize=mu)
             return z_new, current_log_weights, directions, score_match_cur, forward_grad
 
-    def specific_transitions(self, z, x, init_logdensity, annealing_logdens):
+    def specific_transitions(self, z, x, init_logdensity, annealing_logdens, mu):
         all_acceptance = torch.tensor([], dtype=torch.float32, device=x.device)
         beta = self.get_betas()
         sum_log_weights = -init_logdensity(z=z)
@@ -725,7 +726,8 @@ class ULA_VAE(BaseMCMC):
                 current_num=i - 1,
                 z=z_transformed,
                 x=x,
-                annealing_logdens=annealing_logdens(beta=beta[i]))
+                annealing_logdens=annealing_logdens(beta=beta[i]),
+                mu=mu)
             loss_sm += score_match_cur
             sum_log_weights += current_log_weights
             all_acceptance = torch.cat([all_acceptance, directions[None]])

@@ -267,7 +267,7 @@ class ULA(nn.Module):
         self.log_jac += torch.sum(torch.log(S), dim=1) * sign
         return S
 
-    def make_transition(self, z, target, x=None, reverse_kernel=None):
+    def make_transition(self, z, target, x=None, reverse_kernel=None, mu_amortize=None):
         """
         Input:
         z_old - current position
@@ -284,14 +284,13 @@ class ULA(nn.Module):
 
         z_upd, eps, eps_reverse, score_match_cur, forward_grad = self._forward_step(z_old=z, x=x, target=target)
 
-        # import pdb
-        # pdb.set_trace()
         if reverse_kernel is None:
             proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         else:
-            mu, logvar = reverse_kernel(z)
+            mu, logvar = reverse_kernel(torch.cat([z_upd, mu_amortize], dim=1))
             proposal_density_numerator = torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
-                z_upd).sum(1)
+                z).sum(1)
+
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
 
         z_new = z_upd
