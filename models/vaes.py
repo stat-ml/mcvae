@@ -225,7 +225,7 @@ class Base(pl.LightningModule):
             elif self.dataset.lower().find('omniglot') > -1:
                 x_hat = torch.sigmoid(self(self.random_z.to(val_loss.device))).view((-1, 1, 105, 105))
             elif self.dataset.lower().find('celeba') > -1:
-                x_hat = self(self.random_z.to(val_loss.device)).view((-1, 3, 80, 80)).clamp(0., 1.)
+                x_hat = self(self.random_z.to(val_loss.device)).view((-1, 3, 64, 64)).clamp(0., 1.)
             grid = torchvision.utils.make_grid(x_hat)
             self.logger.experiment.add_image(f'{self.dataset}/{self.name}/image', grid, self.current_epoch)
         else:
