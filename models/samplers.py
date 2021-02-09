@@ -288,7 +288,7 @@ class ULA(nn.Module):
             proposal_density_numerator = std_normal.log_prob(eps_reverse).sum(1)
         else:
             mu, logvar = reverse_kernel(torch.cat([z_upd, mu_amortize], dim=1))
-            proposal_density_numerator = torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
+            proposal_density_numerator = torch.distributions.Normal(loc=mu + z_upd, scale=torch.exp(0.5 * logvar)).log_prob(
                 z).sum(1)
 
         proposal_density_denominator = std_normal.log_prob(eps).sum(1)
