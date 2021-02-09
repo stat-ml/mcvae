@@ -20,7 +20,7 @@ class NormFlow(nn.Module):
             split_dim = hidden_dim // 2
             param_dims = [hidden_dim - split_dim, hidden_dim - split_dim]
             self.flow = nn.ModuleList(
-                [AffineCoupling(split_dim, DenseNN(split_dim, [2 * hidden_dim], param_dims)) for _ in range(num_flows)])
+                [AffineCoupling(split_dim, DenseNN(split_dim, [hidden_dim], param_dims)) for _ in range(num_flows)])
         else:
             raise NotImplementedError
         even = [i for i in range(0, hidden_dim, 2)]

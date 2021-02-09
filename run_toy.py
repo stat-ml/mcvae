@@ -144,7 +144,7 @@ class ToyEncoder(nn.Module):
         self.aux = nn.Parameter(torch.tensor(0., dtype=torch.float32))
 
     def forward(self, x):
-        return torch.zeros(x.shape[0], 2 * d, device=x.device, dtype=torch.float32) + self.aux
+        return torch.zeros(x.shape[0], 2 * d, device=x.device, dtype=torch.float32) + self.aux * 0.
 
 
 class ToyEncoder_VB(nn.Module):
@@ -154,7 +154,7 @@ class ToyEncoder_VB(nn.Module):
         self.log_sigma_z = nn.Parameter(torch.zeros(d, dtype=torch.float32))
 
     def forward(self, x):
-        ol = torch.ones_like(x)
+        ol = torch.ones(x[:, 0], self.log_sigma_z.shape[0])
         return torch.cat([self.var_mean * ol, self.log_sigma_z * ol], dim=1)
 
 
@@ -188,7 +188,7 @@ def run_trainer(model):
 
 def compute_discrepancy(model):
     with torch.no_grad():
-        return (model.decoder_net.alpha - 2 * np.pi) ** 2 + (model.decoder_net.beta - 2) ** 2
+        return (model.decoder_net.alpha - 2 * np.pi) ** 2 + (model.decoder_net.beta - 2.) ** 2
 
 
 def get_alpha(model):
@@ -228,11 +228,11 @@ if __name__ == '__main__':
         ula_vae = ULA_VAE_Toy(shape=28, act_func=nn.LeakyReLU,
                               num_samples=1, hidden_dim=d,
                               net_type='conv', dataset='toy',
-                              step_size=0.01, K=4, use_transforms=False, learnable_transitions=False,
+                              step_size=0.01, K=5, use_transforms=False, learnable_transitions=False,
                               return_pre_alphas=True, use_score_matching=False,
                               ula_skip_threshold=0.1, grad_skip_val=0., grad_clip_val=0., use_cloned_decoder=False,
                               variance_sensitive_step=True,
-                              acceptance_rate_target=0.9, annealing_scheme='all_learnable')
+                              acceptance_rate_target=0.9, annealing_scheme='linear')
         ula_vae = replace_enc_dec(ula_vae)
         ula_vae.name = 'ULA_VAE'
 
@@ -240,10 +240,10 @@ if __name__ == '__main__':
         ais_vae = AIS_VAE_Toy(shape=28, act_func=nn.LeakyReLU,
                               num_samples=1, hidden_dim=d,
                               net_type='conv', dataset='toy',
-                              step_size=0.01, K=4, use_barker=False, learnable_transitions=False,
+                              step_size=0.01, K=5, use_barker=False, learnable_transitions=False,
                               use_alpha_annealing=True, grad_skip_val=0.,
                               grad_clip_val=0., use_cloned_decoder=False, variance_sensitive_step=True,
-                              acceptance_rate_target=0.8, annealing_scheme='all_learnable')
+                              acceptance_rate_target=0.8, annealing_scheme='linear')
         ais_vae = replace_enc_dec(ais_vae)
         ais_vae.name = 'AIS_VAE'
 
