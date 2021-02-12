@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from models.vaes import Base, VAE, IWAE, AIS_VAE, ULA_VAE, VAE_with_flows
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 
 def repeat_data(x, n_samples):
@@ -216,7 +216,7 @@ if __name__ == '__main__':
 
         # ----- IWAE ------ #
         iwae = IWAE_Toy(shape=28, act_func=nn.LeakyReLU,
-                        num_samples=2, hidden_dim=d,
+                        num_samples=5, hidden_dim=d,
                         net_type='conv', dataset='toy')
         iwae = replace_enc_dec(iwae)
         iwae.name = 'IWAE'
@@ -226,7 +226,7 @@ if __name__ == '__main__':
         ula_vae = ULA_VAE_Toy(shape=28, act_func=nn.LeakyReLU,
                               num_samples=3, hidden_dim=d,
                               net_type='conv', dataset='toy',
-                              step_size=0.01, K=15, use_transforms=False, learnable_transitions=False,
+                              step_size=0.01, K=20, use_transforms=False, learnable_transitions=False,
                               return_pre_alphas=True, use_score_matching=False,
                               ula_skip_threshold=0.1, grad_skip_val=0., grad_clip_val=0., use_cloned_decoder=False,
                               variance_sensitive_step=True,
@@ -236,12 +236,12 @@ if __name__ == '__main__':
 
         # ----- AIS_VAE ----- #
         ais_vae = AIS_VAE_Toy(shape=28, act_func=nn.LeakyReLU,
-                              num_samples=5, hidden_dim=d,
+                              num_samples=7, hidden_dim=d,
                               net_type='conv', dataset='toy',
-                              step_size=0.01, K=15, use_barker=False, learnable_transitions=False,
-                              use_alpha_annealing=False, grad_skip_val=0.,
+                              step_size=0.01, K=20, use_barker=False, learnable_transitions=False,
+                              use_alpha_annealing=True, grad_skip_val=0.,
                               grad_clip_val=0., use_cloned_decoder=False, variance_sensitive_step=True,
-                              acceptance_rate_target=0.8, annealing_scheme='linear')
+                              acceptance_rate_target=0.9, annealing_scheme='linear')
         ais_vae = replace_enc_dec(ais_vae)
         ais_vae.name = 'AIS_VAE'
 
@@ -249,7 +249,7 @@ if __name__ == '__main__':
         flows_vae = VAE_with_flows_Toy(shape=28, act_func=nn.LeakyReLU,
                                        num_samples=1, hidden_dim=d,
                                        net_type='conv', dataset='toy',
-                                       flow_type='RNVP', num_flows=4, need_permute=True)
+                                       flow_type='RNVP', num_flows=3, need_permute=True)
         flows_vae = replace_enc_dec(flows_vae)
         flows_vae.name = 'VAE_with_Flows'
         flows_vae.encoder_net = ToyEncoder_VB(d=d).to(device)
@@ -285,19 +285,19 @@ if __name__ == '__main__':
         full_results['A-MCVAE'].append(compute_discrepancy(ais_vae).cpu().item())
         full_alphas['A-MCVAE'].append(get_alpha(ais_vae).cpu().item())
         full_betas['A-MCVAE'].append(get_beta(ais_vae).cpu().item())
-        #
-        # print('ULA')
-        # run_trainer(ula_vae)
-        # full_results['L-MCVAE'].append(compute_discrepancy(ula_vae).cpu().item())
-        # full_alphas['L-MCVAE'].append(get_alpha(ula_vae).cpu().item())
-        # full_betas['L-MCVAE'].append(get_beta(ula_vae).cpu().item())
+
+        print('ULA')
+        run_trainer(ula_vae)
+        full_results['L-MCVAE'].append(compute_discrepancy(ula_vae).cpu().item())
+        full_alphas['L-MCVAE'].append(get_alpha(ula_vae).cpu().item())
+        full_betas['L-MCVAE'].append(get_beta(ula_vae).cpu().item())
 
     # as requested in comment
-    with open('./toy_results.txt', 'w') as file:
+    with open('./toy_results_1.txt', 'w') as file:
         file.write(json.dumps(full_results))  # use `json.loads` to do the reverse
 
-    with open('./toy_results_alpha.txt', 'w') as file:
+    with open('./toy_results_alpha_1.txt', 'w') as file:
         file.write(json.dumps(full_alphas))  # use `json.loads` to do the reverse
 
-    with open('./toy_results_beta.txt', 'w') as file:
+    with open('./toy_results_beta_1.txt', 'w') as file:
         file.write(json.dumps(full_betas))  # use `json.loads` to do the reverse

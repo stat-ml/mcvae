@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
 
-from models import VAE, IWAE, AIS_VAE, ULA_VAE, Stacked_VAE
+from models import VAE, IWAE, AIS_VAE, ULA_VAE
 from utils import make_dataloaders, get_activations, str2bool
 
 if __name__ == '__main__':
@@ -11,8 +11,8 @@ if __name__ == '__main__':
     parser = pl.Trainer.add_argparse_args(parser)
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
 
-    parser.add_argument("--model", default="Stacked_VAE",
-                        choices=["VAE", "IWAE", "AIS_VAE", "ULA_VAE", "Stacked_VAE"])
+    parser.add_argument("--model", default="VAE",
+                        choices=["VAE", "IWAE", "AIS_VAE", "ULA_VAE"])
 
     ## Dataset params
     parser.add_argument("--dataset", default='mnist', choices=['mnist', 'fashionmnist', 'cifar', 'omniglot', 'celeba'])
@@ -98,12 +98,6 @@ if __name__ == '__main__':
                         variance_sensitive_step=args.variance_sensitive_step,
                         ula_skip_threshold=args.ula_skip_threshold, annealing_scheme=args.annealing_scheme,
                         specific_likelihood=args.specific_likelihood, sigma=args.sigma)
-    elif args.model == 'Stacked_VAE':
-        model = Stacked_VAE(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
-                            hidden_dim=args.hidden_dim,
-                            name=args.model, net_type=args.net_type, dataset=args.dataset, step_size=args.step_size,
-                            K=args.K, use_barker=args.use_barker, n_first_iterations=5, first_model='VAE',
-                            second_model='AIS_VAE')
     else:
         raise ValueError
 
