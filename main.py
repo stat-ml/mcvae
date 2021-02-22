@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
 
-from models import VAE, IWAE, AIS_VAE, ULA_VAE
+from models import VAE, IWAE, AMCVAE, LMCVAE
 from utils import make_dataloaders, get_activations, str2bool
 
 if __name__ == '__main__':
@@ -12,7 +12,7 @@ if __name__ == '__main__':
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
 
     parser.add_argument("--model", default="VAE",
-                        choices=["VAE", "IWAE", "AIS_VAE", "ULA_VAE"])
+                        choices=["VAE", "IWAE", "AMCVAE", "LMCVAE"])
 
     ## Dataset params
     parser.add_argument("--dataset", default='mnist', choices=['mnist', 'fashionmnist', 'cifar', 'omniglot', 'celeba'])
@@ -78,8 +78,8 @@ if __name__ == '__main__':
                      hidden_dim=args.hidden_dim,
                      name=args.model, net_type=args.net_type, dataset=args.dataset,
                      specific_likelihood=args.specific_likelihood, sigma=args.sigma)
-    elif args.model == 'AIS_VAE':
-        model = AIS_VAE(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
+    elif args.model == 'AMCVAE':
+        model = AMCVAE(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
                         num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
@@ -88,8 +88,8 @@ if __name__ == '__main__':
                         variance_sensitive_step=args.variance_sensitive_step,
                         use_alpha_annealing=args.use_alpha_annealing, annealing_scheme=args.annealing_scheme,
                         specific_likelihood=args.specific_likelihood, sigma=args.sigma)
-    elif args.model == 'ULA_VAE':
-        model = ULA_VAE(shape=image_shape, step_size=args.step_size, K=args.K,
+    elif args.model == 'LMCVAE':
+        model = LMCVAE(shape=image_shape, step_size=args.step_size, K=args.K,
                         num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
                         dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
                         hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,

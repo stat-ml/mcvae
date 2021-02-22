@@ -14,10 +14,10 @@ from models.samplers import HMC, MALA, ULA
 
 
 def binary_crossentropy_logits_stable(x, y):
-    '''
+    """
     Special binary crossentropy where y can be a single data batch, while
     x has several repeats
-    '''
+    """
     return torch.clamp(x, 0) - x * y + torch.log(1 + torch.exp(-torch.abs(x)))
 
 
@@ -32,36 +32,6 @@ def repeat_data(x, n_samples):
     return x
 
 
-class Pass_grads:
-    def __init__(self):
-        pass
-
-    def __enter__(self):
-        return
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_val:
-            raise
-
-
-class Stop_grads:
-    '''
-    Context manager, which stops gradients if the flag is True, otherwise computes graph
-    '''
-
-    def __init__(self, stop_grad):
-        if stop_grad:
-            self.action = torch.no_grad()
-        else:
-            self.action = Pass_grads()
-
-    def __enter__(self):
-        return self.action.__enter__()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        return self.action.__exit__(exc_type, exc_val, exc_tb)
-
-
 class Base(pl.LightningModule):
     '''
     Base class for all VAEs
@@ -69,7 +39,7 @@ class Base(pl.LightningModule):
 
     def __init__(self, num_samples, act_func, shape, hidden_dim, net_type,
                  dataset, specific_likelihood=None, sigma=1., name="VAE", **kwargs):
-        '''
+        """
 
         :param num_samples: how many latent samples per object to use
         :param act_func: activation function
@@ -79,7 +49,7 @@ class Base(pl.LightningModule):
         :param net_type: network type (conv or fc)
         :param dataset: dataset name
         :param kwargs: specific args
-        '''
+        """
         super().__init__()
         self.save_hyperparameters()
         self.dataset = dataset
@@ -532,9 +502,9 @@ class BaseMCMC(Base):
         return d
 
 
-class AIS_VAE(BaseMCMC):
+class AMCVAE(BaseMCMC):
     '''
-    Annealed Importance Sampling VAE.
+    Class for A-MCVAE
     '''
 
     def __init__(self, use_barker, use_alpha_annealing, **kwargs):
@@ -668,9 +638,9 @@ class AIS_VAE(BaseMCMC):
             return {"loss": loss}
 
 
-class ULA_VAE(BaseMCMC):
+class LMCVAE(BaseMCMC):
     '''
-    Class for ULA VAE
+    Class for L-MCVAE
     '''
 
     def __init__(self, use_score_matching, ula_skip_threshold, use_reverse_kernel=False, **kwargs):
@@ -800,4 +770,3 @@ class ULA_VAE(BaseMCMC):
                                     beta=torch.linspace(0., 1., 5, device=batch[0].device, dtype=torch.float32))
             d.update({"nll": nll})
         return d
-

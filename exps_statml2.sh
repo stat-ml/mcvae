@@ -1,7 +1,0 @@
-CUDA_VISIBLE_DEVICES=0 python main.py --model VAE --dataset celeba --act_func gelu --binarize False --hidden_dim 128 --batch_size 30 --net_type conv --max_epochs 100 --limit_train_batches 0.1 --limit_val_batches 0.1 --gpus 1
-
-CUDA_VISIBLE_DEVICES=0 python main.py --model IWAE --dataset celeba --act_func gelu --binarize False --hidden_dim 128 --batch_size 30 --net_type conv --num_samples 10 --max_epochs 100 --limit_train_batches 0.1 --limit_val_batches 0.1 --gpus 1
-CUDA_VISIBLE_DEVICES=0 python main.py --model IWAE --dataset celeba --act_func gelu --binarize False --hidden_dim 128 --batch_size 30 --net_type conv --num_samples 50 --max_epochs 100 --limit_train_batches 0.1 --limit_val_batches 0.1 --gpus 1
-
-CUDA_VISIBLE_DEVICES=0 python main.py --model ULA_VAE --dataset celeba --act_func gelu --binarize False --hidden_dim 128 --batch_size 30 --max_epochs 100 --step_size 0.01 --K 5 --variance_sensitive_step True --ula_skip_threshold 0.1 --acceptance_rate_target 0.9 --annealing_scheme linear --grad_clip_val 50 --limit_train_batches 0.1 --limit_val_batches 0.1 --gpus 1
-CUDA_VISIBLE_DEVICES=0 python main.py --model ULA_VAE --dataset celeba --act_func gelu --binarize False --hidden_dim 128 --batch_size 30 --max_epochs 100 --step_size 0.01 --K 10 --variance_sensitive_step True --ula_skip_threshold 0.1 --acceptance_rate_target 0.9 --annealing_scheme linear --grad_clip_val 50 --limit_train_batches 0.1 --limit_val_batches 0.1 --gpus 1

@@ -19,8 +19,9 @@ class NormFlow(nn.Module):
         elif flow_type == 'RNVP':
             split_dim = hidden_dim // 2
             param_dims = [hidden_dim - split_dim, hidden_dim - split_dim]
+            params = min(hidden_dim, 15)
             self.flow = nn.ModuleList(
-                [AffineCoupling(split_dim, DenseNN(split_dim, [hidden_dim], param_dims)) for _ in range(num_flows)])
+                [AffineCoupling(split_dim, DenseNN(split_dim, [params], param_dims)) for _ in range(num_flows)])
         else:
             raise NotImplementedError
         even = [i for i in range(0, hidden_dim, 2)]

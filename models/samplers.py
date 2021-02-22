@@ -13,7 +13,7 @@ def acceptance_ratio(log_t, log_1_t, use_barker, return_pre_alphas=False):
 
     if use_barker:
         current_log_alphas = current_log_alphas_pre
-        current_log_alphas[~a] = (-log_t)[~a]
+        current_log_alphas[~a] = (-log_1_t)[~a]
     else:
         expression = torch.ones_like(current_log_alphas_pre) - torch.exp(current_log_alphas_pre)
         corr_expression = torch.log(expression + 1e-8)

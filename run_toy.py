@@ -7,7 +7,7 @@ import torch.nn as nn
 from pytorch_lightning import loggers as pl_loggers
 from torch.utils.data import Dataset, DataLoader
 
-from models.vaes import Base, VAE, IWAE, AIS_VAE, ULA_VAE, VAE_with_flows
+from models.vaes import Base, VAE, IWAE, AMCVAE, LMCVAE, VAE_with_flows
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -113,15 +113,15 @@ class VAE_with_flows_Toy(VAE_with_flows, Toy):
         return loss
 
 
-class ULA_VAE_Toy(ULA_VAE, Toy):
+class LMCVAE_Toy(LMCVAE, Toy):
     def loss_function(self, sum_log_weights):
-        loss = super(ULA_VAE_Toy, self).loss_function(sum_log_weights)
+        loss = super(LMCVAE_Toy, self).loss_function(sum_log_weights)
         return loss
 
 
-class AIS_VAE_Toy(AIS_VAE, Toy):
+class AMCVAE_Toy(AMCVAE, Toy):
     def loss_function(self, sum_log_alphas, sum_log_weights):
-        loss = super(AIS_VAE_Toy, self).loss_function(sum_log_alphas, sum_log_weights)
+        loss = super(AMCVAE_Toy, self).loss_function(sum_log_alphas, sum_log_weights)
         return loss
 
 
@@ -178,7 +178,7 @@ class ToyDecoder(nn.Module):
                 torch.sqrt(torch.sum(torch.pow(x, 2), dim=1, keepdim=True)) + self.beta)
 
 
-def run_trainer(model, num_epoches=51):
+def run_trainer(model, num_epoches=21):
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
     trainer = pl.Trainer(logger=tb_logger, fast_dev_run=False, max_epochs=num_epoches, automatic_optimization=True, )
     trainer.fit(model, train_dataloader=train_loader, val_dataloaders=val_loader)
@@ -216,40 +216,40 @@ if __name__ == '__main__':
 
         # ----- IWAE ------ #
         iwae = IWAE_Toy(shape=28, act_func=nn.LeakyReLU,
-                        num_samples=2, hidden_dim=d,
+                        num_samples=5, hidden_dim=d,
                         net_type='conv', dataset='toy')
         iwae = replace_enc_dec(iwae)
         iwae.name = 'IWAE'
         iwae.encoder_net = ToyEncoder_VB(d=d).to(device)
 
-        # ----- ULA_VAE ----- #
-        ula_vae = ULA_VAE_Toy(shape=28, act_func=nn.LeakyReLU,
-                              num_samples=3, hidden_dim=d,
+        # ----- LMCVAE ----- #
+        ula_vae = LMCVAE_Toy(shape=28, act_func=nn.LeakyReLU,
+                              num_samples=1, hidden_dim=d,
                               net_type='conv', dataset='toy',
-                              step_size=0.01, K=15, use_transforms=False, learnable_transitions=False,
+                              step_size=0.01, K=10, use_transforms=False, learnable_transitions=False,
                               return_pre_alphas=True, use_score_matching=False,
                               ula_skip_threshold=0.1, grad_skip_val=0., grad_clip_val=0., use_cloned_decoder=False,
                               variance_sensitive_step=True,
                               acceptance_rate_target=0.9, annealing_scheme='linear')
         ula_vae = replace_enc_dec(ula_vae)
-        ula_vae.name = 'ULA_VAE'
+        ula_vae.name = 'LMCVAE'
 
-        # ----- AIS_VAE ----- #
-        ais_vae = AIS_VAE_Toy(shape=28, act_func=nn.LeakyReLU,
+        # ----- AMCVAE ----- #
+        ais_vae = AMCVAE_Toy(shape=28, act_func=nn.LeakyReLU,
                               num_samples=5, hidden_dim=d,
                               net_type='conv', dataset='toy',
-                              step_size=0.01, K=15, use_barker=False, learnable_transitions=False,
-                              use_alpha_annealing=False, grad_skip_val=0.,
+                              step_size=0.01, K=10, use_barker=False, learnable_transitions=False,
+                              use_alpha_annealing=True, grad_skip_val=0.,
                               grad_clip_val=0., use_cloned_decoder=False, variance_sensitive_step=True,
-                              acceptance_rate_target=0.8, annealing_scheme='linear')
+                              acceptance_rate_target=0.9, annealing_scheme='linear')
         ais_vae = replace_enc_dec(ais_vae)
-        ais_vae.name = 'AIS_VAE'
+        ais_vae.name = 'AMCVAE'
 
         # ----- VAE_with_Flows ----- #
         flows_vae = VAE_with_flows_Toy(shape=28, act_func=nn.LeakyReLU,
                                        num_samples=1, hidden_dim=d,
                                        net_type='conv', dataset='toy',
-                                       flow_type='RNVP', num_flows=4, need_permute=True)
+                                       flow_type='RNVP', num_flows=2, need_permute=True)
         flows_vae = replace_enc_dec(flows_vae)
         flows_vae.name = 'VAE_with_Flows'
         flows_vae.encoder_net = ToyEncoder_VB(d=d).to(device)
@@ -262,20 +262,20 @@ if __name__ == '__main__':
         train_loader = DataLoader(train_dataset, batch_size=100, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=100, shuffle=False)
 
-        # print('IWAE')
-        # run_trainer(iwae)
-        # full_results['IWAE'].append(compute_discrepancy(iwae).cpu().item())
-        # full_alphas['IWAE'].append(get_alpha(iwae).cpu().item())
-        # full_betas['IWAE'].append(get_beta(iwae).cpu().item())
+        print('IWAE')
+        run_trainer(iwae)
+        full_results['IWAE'].append(compute_discrepancy(iwae).cpu().item())
+        full_alphas['IWAE'].append(get_alpha(iwae).cpu().item())
+        full_betas['IWAE'].append(get_beta(iwae).cpu().item())
 
-        # print('VAE')
-        # run_trainer(vae)
-        # full_results['VAE'].append(compute_discrepancy(vae).cpu().item())
-        # full_alphas['VAE'].append(get_alpha(vae).cpu().item())
-        # full_betas['VAE'].append(get_beta(vae).cpu().item())
+        print('VAE')
+        run_trainer(vae)
+        full_results['VAE'].append(compute_discrepancy(vae).cpu().item())
+        full_alphas['VAE'].append(get_alpha(vae).cpu().item())
+        full_betas['VAE'].append(get_beta(vae).cpu().item())
 
         print('Flows')
-        run_trainer(flows_vae, num_epoches=501)
+        run_trainer(flows_vae, num_epoches=31)
         full_results['RealNVP'].append(compute_discrepancy(flows_vae).cpu().item())
         full_alphas['RealNVP'].append(get_alpha(flows_vae).cpu().item())
         full_betas['RealNVP'].append(get_beta(flows_vae).cpu().item())
@@ -285,12 +285,12 @@ if __name__ == '__main__':
         full_results['A-MCVAE'].append(compute_discrepancy(ais_vae).cpu().item())
         full_alphas['A-MCVAE'].append(get_alpha(ais_vae).cpu().item())
         full_betas['A-MCVAE'].append(get_beta(ais_vae).cpu().item())
-        #
-        # print('ULA')
-        # run_trainer(ula_vae)
-        # full_results['L-MCVAE'].append(compute_discrepancy(ula_vae).cpu().item())
-        # full_alphas['L-MCVAE'].append(get_alpha(ula_vae).cpu().item())
-        # full_betas['L-MCVAE'].append(get_beta(ula_vae).cpu().item())
+
+        print('ULA')
+        run_trainer(ula_vae)
+        full_results['L-MCVAE'].append(compute_discrepancy(ula_vae).cpu().item())
+        full_alphas['L-MCVAE'].append(get_alpha(ula_vae).cpu().item())
+        full_betas['L-MCVAE'].append(get_beta(ula_vae).cpu().item())
 
     # as requested in comment
     with open('./toy_results.txt', 'w') as file:
