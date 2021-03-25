@@ -5,11 +5,12 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torchvision
+from metlibvi.vi import NormFlow
 
 from models.aux import ULA_nn_sm
 from models.decoders import get_decoder
 from models.encoders import get_encoder, backward_kernel_mnist
-from models.normflows import NormFlow
+# from models.normflows import NormFlow
 from models.samplers import HMC, MALA, ULA
 
 
@@ -225,8 +226,19 @@ class Base(pl.LightningModule):
             n_samples = 10  # num samples for NLL estimation per data object
             z, mu, logvar = self.enc_rep(x, n_samples=n_samples)
             x = repeat_data(x, n_samples)
-            init_logdensity = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
-                z).sum(-1)
+            if self.name == "VAE_with_flows":
+                z_0 = z.clone()
+                output = self.Flow(z_0)
+                z = output["z_new"]
+
+                def init_logdensity(z):
+                    output = self.Flow.inverse(z)
+                    z_0, log_jac = output["z_new"], output["aggregated_log_jac"]
+                    return torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(z_0).sum(
+                        -1) + log_jac
+            else:
+                init_logdensity = lambda z: torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(
+                    z).sum(-1)
             annealing_logdens = lambda beta: lambda z, x: (1. - beta) * init_logdensity(
                 z=z) + beta * self.joint_logdensity()(
                 z=z,
@@ -301,9 +313,10 @@ class IWAE(Base):
 
 
 class VAE_with_flows(Base):
-    def __init__(self, flow_type, num_flows, need_permute, **kwargs):
+    def __init__(self, flow_type, num_flows, **kwargs):
         super().__init__(**kwargs)
-        self.Flow = NormFlow(flow_type, num_flows, self.hidden_dim, need_permute)
+        self.Flow = NormFlow(flow_type=flow_type, num_flows=num_flows, hidden_dim=self.hidden_dim, need_permute=True,
+                             hidden_dims=[self.hidden_dim, self.hidden_dim])
         self.save_hyperparameters()
 
     def configure_optimizers(self):
@@ -311,14 +324,12 @@ class VAE_with_flows(Base):
 
     def loss_function(self, recon_x, x, mu, logvar, z, z_transformed, log_jac):
         batch_size = mu.shape[0] // self.num_samples
-        # BCE = binary_crossentropy_logits_stable(recon_x, x.view(mu.shape[0], -1)).view(
-        #     (self.num_samples, batch_size, -1)).mean(0).sum(-1).mean()
         likelihood = self.get_likelihood(recon_x, x)
         likelihood = likelihood.view(self.num_samples, batch_size).mean(0).mean()
         log_Q = torch.mean(torch.distributions.Normal(loc=mu, scale=torch.exp(0.5 * logvar)).log_prob(z).view(
             (self.num_samples, batch_size, -1)).sum(-1) - log_jac.view((self.num_samples, -1)), dim=0)
         log_Pr = (-0.5 * z_transformed ** 2).view(
-            (self.num_samples, batch_size, -1)).mean(0).sum(-1)
+            (self.num_samples, batch_size, -1)).sum(-1).mean(0)
         KLD = torch.mean(log_Q - log_Pr)
         loss = -likelihood + KLD
         return loss
@@ -327,7 +338,8 @@ class VAE_with_flows(Base):
         x, _ = batch
         z, mu, logvar = self.enc_rep(x, self.num_samples)
         x = repeat_data(x, self.num_samples)
-        z_transformed, log_jac = self.Flow(z)
+        output = self.Flow(z)
+        z_transformed, log_jac = output["z_new"], output["aggregated_log_jac"]
         x_hat = self(z_transformed)
         loss = self.loss_function(recon_x=x_hat, x=x, mu=mu, logvar=logvar, z=z, z_transformed=z_transformed,
                                   log_jac=log_jac)

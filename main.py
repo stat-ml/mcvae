@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
 
-from models import VAE, IWAE, AMCVAE, LMCVAE
+from models import VAE, IWAE, AMCVAE, LMCVAE, VAE_with_flows
 from utils import make_dataloaders, get_activations, str2bool
 
 if __name__ == '__main__':
@@ -12,7 +12,7 @@ if __name__ == '__main__':
     tb_logger = pl_loggers.TensorBoardLogger('lightning_logs/')
 
     parser.add_argument("--model", default="VAE",
-                        choices=["VAE", "IWAE", "AMCVAE", "LMCVAE"])
+                        choices=["VAE", "IWAE", "AMCVAE", "LMCVAE", "VAE_with_flows"])
 
     ## Dataset params
     parser.add_argument("--dataset", default='mnist', choices=['mnist', 'fashionmnist', 'cifar', 'omniglot', 'celeba'])
@@ -56,6 +56,8 @@ if __name__ == '__main__':
                         default=0.95)  # Target acceptance rate
     parser.add_argument("--sigma", type=float, default=1.)
 
+    parser.add_argument("--num_flows", type=int, default=1)
+
     act_func = get_activations()
 
     args = parser.parse_args()
@@ -78,26 +80,33 @@ if __name__ == '__main__':
                      hidden_dim=args.hidden_dim,
                      name=args.model, net_type=args.net_type, dataset=args.dataset,
                      specific_likelihood=args.specific_likelihood, sigma=args.sigma)
+    elif args.model == "VAE_with_flows":
+        model = VAE_with_flows(shape=image_shape, act_func=act_func[args.act_func], num_samples=args.num_samples,
+                               hidden_dim=args.hidden_dim, name=args.model, flow_type="RealNVP",
+                               num_flows=args.num_flows,
+                               net_type=args.net_type, dataset=args.dataset,
+                               specific_likelihood=args.specific_likelihood,
+                               sigma=args.sigma)
     elif args.model == 'AMCVAE':
         model = AMCVAE(shape=image_shape, step_size=args.step_size, K=args.K, use_barker=args.use_barker,
-                        num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
-                        dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
-                        hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
-                        grad_clip_val=args.grad_clip_val,
-                        use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
-                        variance_sensitive_step=args.variance_sensitive_step,
-                        use_alpha_annealing=args.use_alpha_annealing, annealing_scheme=args.annealing_scheme,
-                        specific_likelihood=args.specific_likelihood, sigma=args.sigma)
+                       num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
+                       dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
+                       hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
+                       grad_clip_val=args.grad_clip_val,
+                       use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
+                       variance_sensitive_step=args.variance_sensitive_step,
+                       use_alpha_annealing=args.use_alpha_annealing, annealing_scheme=args.annealing_scheme,
+                       specific_likelihood=args.specific_likelihood, sigma=args.sigma)
     elif args.model == 'LMCVAE':
         model = LMCVAE(shape=image_shape, step_size=args.step_size, K=args.K,
-                        num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
-                        dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
-                        hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
-                        grad_clip_val=args.grad_clip_val, use_score_matching=args.use_score_matching,
-                        use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
-                        variance_sensitive_step=args.variance_sensitive_step,
-                        ula_skip_threshold=args.ula_skip_threshold, annealing_scheme=args.annealing_scheme,
-                        specific_likelihood=args.specific_likelihood, sigma=args.sigma)
+                       num_samples=args.num_samples, acceptance_rate_target=args.acceptance_rate_target,
+                       dataset=args.dataset, net_type=args.net_type, act_func=act_func[args.act_func],
+                       hidden_dim=args.hidden_dim, name=args.model, grad_skip_val=args.grad_skip_val,
+                       grad_clip_val=args.grad_clip_val, use_score_matching=args.use_score_matching,
+                       use_cloned_decoder=args.use_cloned_decoder, learnable_transitions=args.learnable_transitions,
+                       variance_sensitive_step=args.variance_sensitive_step,
+                       ula_skip_threshold=args.ula_skip_threshold, annealing_scheme=args.annealing_scheme,
+                       specific_likelihood=args.specific_likelihood, sigma=args.sigma)
     else:
         raise ValueError
 

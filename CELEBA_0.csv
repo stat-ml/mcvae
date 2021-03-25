@@ -1,0 +1,16 @@
+,e10,e30,e100,n10,n30,n100
+VAE,11424.2861328125,11417.4951171875,11414.810546875,11417.34765625,11412.4814453125,11410.19140625
+"IWAE, K=10",11418.95703125,11412.8408203125,11409.9677734375,11418.88671875,11412.6328125,11409.6630859375
+"IWAE, K=50",11420.36328125,11412.16015625,11411.140625,,,
+"AMCVAE, K=3, fixed",,,,,,
+"AMCVAE, K=3, sigmoidal",,,,,,
+"AMCVAE, K=3, all_learnable",,,,,,
+"AMCVAE, K=5, fixed",,,,,,
+"AMCVAE, K=5, sigmoidal",,,,,,
+"AMCVAE, K=5, all_learnable",,,,,,
+"LMCVAE, K=5, fixed",,,,,,
+"LMCVAE, K=5, sigmoidal",,,,,,
+"LMCVAE, K=5, all_learnable",,,,,,
+"LMCVAE, K=10, fixed",,,,,,
+"LMCVAE, K=10, sigmoidal",,,,,,
+"LMCVAE, K=10, all_learnable",,,,,,
