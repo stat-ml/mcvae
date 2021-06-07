@@ -62,4 +62,4 @@ if __name__ == '__main__':
             resulting_table.loc[resulting_table.index[i], "n30"] = np.nan
             resulting_table.loc[resulting_table.index[i], "n100"] = np.nan
 
-    resulting_table.to_csv('CELEBA_1.csv')
+    resulting_table.to_csv('CELEBA_0.csv')
