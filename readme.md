@@ -1,4 +1,6 @@
-The repository compliments code of 'Monte Carlo VAE' paper.
+# Monte Carlo Variational Auto-Encoders
+
+The repository compliments code of 'Monte Carlo Variational Auto-Encoders' paper.
 
 In this paper we introduce new objectives for training a VAE. These objectives are inspired by the exactness of MCMC methods and its specific application in annealing importance sampling.
 
