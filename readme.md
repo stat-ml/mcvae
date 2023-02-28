@@ -1,6 +1,30 @@
 The repository compliments code of 'Monte Carlo VAE' paper.
 
+In this paper we introduce new objectives for training a VAE. These objectives are inspired by the exactness of MCMC methods and its specific application in annealing importance sampling.
 
+The posteriors we received using our approach is very flexible, allowing us to learn complicated shapes, not feasible to parametric approaches. The results on the toy example presented below:
+
+<p align="center">
+  <img width="400" alt="Resulting posteriors" src="https://github.com/stat-ml/mcvar/blob/master/pics/different_approximations.jpeg?raw=true">
+</p>
+
+
+In image datasets, in particular MNIST, our new objectives and induced posterior approximations outperform other approaches by a large margin:
+
+<p align="center">
+  <img width="400" alt="Likelihood Comparison" src="https://github.com/stat-ml/mcvae/blob/master/pics/different_likelihoods.jpeg?raw=true">
+</p>
+
+
+Results on other image datasets are presented below:
+
+<p align="center">
+  <img width="400" alt="Results on different datasets" src="https://github.com/stat-ml/mcvae/blob/master/pics/results.jpeg?raw=true">
+</p>
+
+
+
+# How to run the code?
 
 All the experiments which appear in the paper can be run via the `exps.sh` script. For example:
 
@@ -20,7 +44,19 @@ For each experiment we can set
 
 
 
-Visualization of toy example's posterior is located in 'toy_example.ipynb' notebook.
+# Citation
 
-Parameter estimates for the toy example can be obtained via in 'run_toy.py'.
+The original paper can be found [here](http://proceedings.mlr.press/v139/thin21a/thin21a.pdf). If you use **MCVAE**, we kindly ask you to cite:
+
+```
+@inproceedings{thin2021monte,
+  title={Monte Carlo variational auto-encoders},
+  author={Thin, Achille and Kotelevskii, Nikita and Doucet, Arnaud and Durmus, Alain and Moulines, Eric and Panov, Maxim},
+  booktitle={International Conference on Machine Learning},
+  pages={10247--10257},
+  year={2021},
+  organization={PMLR}
+}
+```
+
 
