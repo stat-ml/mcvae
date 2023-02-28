@@ -1,17 +1,17 @@
 # Monte Carlo Variational Auto-Encoders
 
-The repository compliments code of 'Monte Carlo Variational Auto-Encoders' paper.
+The repository complements the code of the 'Monte Carlo Variational Auto-Encoders' paper.
 
-In this paper we introduce new objectives for training a VAE. These objectives are inspired by the exactness of MCMC methods and its specific application in annealing importance sampling.
+In this paper, we introduce new objectives for training a VAE. These objectives are inspired by the exactness of MCMC methods and their specific application in annealing importance sampling.
 
-The posteriors we received using our approach is very flexible, allowing us to learn complicated shapes, not feasible to parametric approaches. The results on the toy example presented below:
+The posteriors we received using our approach are very flexible, allowing us to learn complicated shapes, not feasible to parametric approaches. The results of the toy example are presented below:
 
 <p align="center">
   <img width="400" alt="Resulting posteriors" src="https://github.com/stat-ml/mcvae/blob/master/pics/different_approximations.jpg?raw=true">
 </p>
 
 
-In image datasets, in particular MNIST, our new objectives and induced posterior approximations outperform other approaches by a large margin:
+In image datasets, in particular, MNIST, our new objectives, and induced posterior approximations outperform other approaches by a large margin:
 
 <p align="center">
   <img width="400" alt="Likelihood Comparison" src="https://github.com/stat-ml/mcvae/blob/master/pics/different_likelihoods.jpg?raw=true">
@@ -34,7 +34,7 @@ All the experiments which appear in the paper can be run via the `exps.sh` scrip
 python main.py --model L-MCVAE --dataset mnist --act_func gelu --binarize True --hidden_dim 64 --batch_size 100 --net_type conv --num_samples 1 --max_epochs 50 --step_size 0.01 --K 1 --use_transforms True --learnable_transitions False --use_cloned_decoder True
 ```
 
-For each experiment we can set 
+For each experiment, we can set 
 
 - **model** -- which model we want to train: 'VAE', 'IWAE', 'L-MCVAE' or 'A-MCVAE'
 
