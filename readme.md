@@ -5,7 +5,7 @@ In this paper we introduce new objectives for training a VAE. These objectives a
 The posteriors we received using our approach is very flexible, allowing us to learn complicated shapes, not feasible to parametric approaches. The results on the toy example presented below:
 
 <p align="center">
-  <img width="400" alt="Resulting posteriors" src="https://github.com/stat-ml/mcvar/blob/master/pics/different_approximations.jpeg?raw=true">
+  <img width="400" alt="Resulting posteriors" src="https://github.com/stat-ml/mcvae/blob/master/pics/different_approximations.jpeg?raw=true">
 </p>
 
 
